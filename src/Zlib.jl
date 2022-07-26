@@ -1,105 +1,20 @@
-# This file was copied from https://github.com/dcjones/Zlib.jl
-#
-# Zlib is licensed under the MIT License:
-#
-# > Copyright (c) 2013: Daniel C. Jones
-# >
-# > Permission is hereby granted, free of charge, to any person obtaining
-# > a copy of this software and associated documentation files (the
-# > "Software"), to deal in the Software without restriction, including
-# > without limitation the rights to use, copy, modify, merge, publish,
-# > distribute, sublicense, and/or sell copies of the Software, and to
-# > permit persons to whom the Software is furnished to do so, subject to
-# > the following conditions:
-# >
-# > The above copyright notice and this permission notice shall be
-# > included in all copies or substantial portions of the Software.
-# >
-# > THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
-# > EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
-# > MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
-# > NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE
-# > LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
-# > OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
-# > WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-
 module Zlib
-using Zlib_jll
+using Libz: ZStream
 
 import Base: read, read!, readuntil, readbytes!, write, close, eof
 
 export compress, decompress, crc32
-
-const Z_NO_FLUSH      = 0
-const Z_PARTIAL_FLUSH = 1
-const Z_SYNC_FLUSH    = 2
-const Z_FULL_FLUSH    = 3
-const Z_FINISH        = 4
-const Z_BLOCK         = 5
-const Z_TREES         = 6
-
-const Z_OK            = 0
-const Z_STREAM_END    = 1
-const Z_NEED_DICT     = 2
-const ZERRNO          = -1
-const Z_STREAM_ERROR  = -2
-const Z_DATA_ERROR    = -3
-const Z_MEM_ERROR     = -4
-const Z_BUF_ERROR     = -5
-const Z_VERSION_ERROR = -6
-
-
-# The zlib z_stream structure.
-mutable struct z_stream
-    next_in::Ptr{UInt8}
-    avail_in::Cuint
-    total_in::Culong
-
-    next_out::Ptr{UInt8}
-    avail_out::Cuint
-    total_out::Culong
-
-    msg::Ptr{UInt8}
-    state::Ptr{Cvoid}
-
-    zalloc::Ptr{Cvoid}
-    zfree::Ptr{Cvoid}
-    opaque::Ptr{Cvoid}
-
-    data_type::Cint
-    adler::Culong
-    reserved::Culong
-
-    function z_stream()
-        strm = new()
-        strm.next_in   = C_NULL
-        strm.avail_in  = 0
-        strm.total_in  = 0
-        strm.next_out  = C_NULL
-        strm.avail_out = 0
-        strm.total_out = 0
-        strm.msg       = C_NULL
-        strm.state     = C_NULL
-        strm.zalloc    = C_NULL
-        strm.zfree     = C_NULL
-        strm.opaque    = C_NULL
-        strm.data_type = 0
-        strm.adler     = 0
-        strm.reserved  = 0
-        strm
-    end
-end
 
 function zlib_version()
     ccall((:zlibVersion, libz), Ptr{UInt8}, ())
 end
 
 mutable struct Writer <: IO
-    strm::z_stream
+    strm::ZStream
     io::IO
     closed::Bool
 
-    Writer(strm::z_stream, io::IO, closed::Bool) =
+    Writer(strm::ZStream, io::IO, closed::Bool) =
         (w = new(strm, io, closed); finalizer(close, w); w)
 end
 
@@ -108,7 +23,7 @@ function Writer(io::IO, level::Integer, raw::Bool=false)
         error("Invalid zlib compression level.")
     end
 
-    strm = z_stream()
+    strm = ZStream()
     ret = ccall((:deflateInit2_, libz),
                 Int32, (Ptr{z_stream}, Cint, Cint, Cint, Cint, Cint, Ptr{UInt8}, Int32),
                 Ref(strm), level, 8, raw ? -15 : 15, 8, 0, zlib_version(), sizeof(z_stream))

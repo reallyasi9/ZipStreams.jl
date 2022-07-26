@@ -33,32 +33,202 @@ Julia
 Julia
 ```
 """
-module ZipFile
+module ZipFiles
 
 import Base: read, read!, eof, write, flush, close, mtime, position, show, unsafe_write
 using Printf
 
 export read, read!, eof, write, close, mtime, position, show
 
-include("Zlib.jl")
-import .Zlib
+using CodecZlib
+using TranscodingStreams
 
-# TODO: ZIP64 support, data descriptor support
+@enum Signature::UInt32 begin
+    LocalFileHeader=0x04034b50
+    ExtraDataRecord=0x08064b50
+    CentralDirectory=0x02014b50
+    DigitalSignature=0x05054b50
+    EndCentralDirectory=0x06054b50
+    Zip64EndCentralLocator=0x07064b50
+    Zip64EndCentralDirectory=0x06064b50
+end
 
-const _LocalFileHdrSig   = 0x04034b50
-const _CentralDirSig     = 0x02014b50
-const _EndCentralDirSig  = 0x06054b50
-const _Zip64EndCentralLocSig = 0x07064b50
-const _Zip64EndCentralDirSig = 0x06064b50
-const _ZipVersion = 20
+const ZIP_VERSION = 20
 
-"Compression method that does no compression"
-const Store = UInt16(0)
+@enum GeneralPurposeFlag::UInt16 begin
+    Encrypted=0x0001
+    CompressionOptions=0x0006
+    LocalHeaderSignatureEmpty=0x0008
+    PatchedData=0x0020
+    StrongEncryption=0x0040
+    LanguageEncoding=0x0800
+    LocalHeaderMasked=0x2000
+end
 
-"Deflate compression method"
-const Deflate = UInt16(8)
+@enum ImplodingOptions::UInt16 begin
+    Window8K=0x0002
+    ShannonFano3Trees=0x0004
+end
 
-const _Method2Str = Dict{UInt16,String}(Store => "Store", Deflate => "Deflate")
+@enum DeflatingOptions::UInt16 begin
+    Normal=0x0000
+    Maximum=0x0002
+    Fast=0x0004
+    SuperFast=0x0006
+end
+
+@enum LZMAOptions::UInt16 begin
+    LZMAEOS=0x0002
+end
+
+@enum CompressionMethod::UInt16 begin
+    Store=0
+    Shrink=1
+    Reduce1=2
+    Reduce2=3
+    Reduce3=4
+    Reduce4=5
+    Implode=6
+    Deflate=8
+    Deflate64=9
+    OldTERSE=10
+    BZIP2=12
+    LZMA=14
+    CMPSC=16
+    NewTERSE=18
+    LZ77=19
+    Zstd=93
+    MP3=94
+    XZ=95
+    JPEG=96
+    WavPack=97
+    PPMd=98
+    AEx=99
+end
+
+struct LocalFileHeader
+    signature::UInt32
+    version::UInt16
+    flags::UInt16
+    compression::UInt16
+    modtime::UInt16
+    moddate::UInt16
+    crc32::UInt32
+    compressed_size::UInt32
+    uncompressed_size::UInt32
+    file_name_length::UInt16
+    extra_field_length::UInt16
+
+    file_name::Vector{UInt8}
+    extra_field::Vector{UInt8}
+end
+
+struct EncryptionHeader
+    buffer::NTuple{12, UInt8}
+end
+
+struct DataDescriptor
+    crc32::UInt32
+    compressed_size::UInt32
+    uncompressed_size::UInt32
+end
+
+struct ArchiveExtraDataRecord
+    signature::UInt32
+    length::UInt32
+    data::Vector{UInt8}
+end
+
+struct CentralDirectoryHeader
+    signature::UInt32
+    version_made_by::UInt16
+    version_needed::UInt16
+    flags::UInt16
+    compression_method::UInt16
+    modtime::UInt16
+    moddate::UInt16
+    crc32::UInt32
+    compressed_size::UInt32
+    uncompressed_size::UInt32
+    file_name_length::UInt16
+    extra_field_length::UInt16
+    file_comment_length::UInt16
+    disk_number_start::UInt16
+    internal_attributes::UInt16
+    external_attributes::UInt32
+    local_header_offset::UInt32
+
+    file_name::Vector{UInt8}
+    extra_field::Vector{UInt8}
+    file_comment::Vector{UInt8}
+end
+
+struct DigitalSignature
+    signature::UInt32
+    length::UInt16
+    data::Vector{UInt8}
+end
+
+struct Zip64EndOfCentralDirectoryRecord
+    signature::UInt32
+    length::UInt64
+    version_made_by::UInt16
+    version_needed::UInt16
+    disk_number::UInt32
+    central_directory_disk::UInt32
+    entries_this_disk::UInt64
+    entries_total::UInt64
+    central_directory_length::UInt64
+    central_directory_offset::UInt64
+    
+    extensible_data::Vector{UInt8}
+end
+
+struct Zip64EndOfCentralDirectorLocator
+    signature::UInt32
+    end_of_central_directory_disk::UInt32
+    end_of_central_directory_offset::UInt64
+    total_disks::UInt32
+end
+
+struct EndOfCentralDirectoryRecord
+    signature::UInt32
+    disk_number::UInt16
+    central_directory_disk::UInt16
+    entries_this_disk::UInt16
+    entries_total::UInt16
+    central_directory_length::UInt32
+    central_directory_offset::UInt32
+    comment_length::UInt16
+    comment::Vector{UInt8}
+end
+
+struct FileData{C<:Codec,S<:IO} <: IO
+    header::LocalFileHeader
+    encryption_header::EncryptionHeader
+
+    data::TranscodingStream{C,S}
+
+    data_descriptor::DataDescriptor
+end
+
+"""
+    ZipFile
+
+
+For a full definition, see https://pkware.cachefly.net/webdocs/casestudies/APPNOTE.TXT.
+"""
+struct ZipFile
+    files::Vector{FileData}
+    archive_decryption_header::EncryptionHeader
+    extra_data::ArchiveExtraDataRecord
+    directory::Vector{CentralDirectoryHeader}
+    zip64_eod::Zip64EndOfCentralDirectoryRecord
+    zip64_eod_locator::Zip64EndOfCentralDirectorLocator
+    eod::EndOfCentralDirectoryRecord
+
+    _file_lookup::Dict{String,Int}
+end
 
 mutable struct ReadableFile <: IO
     _io :: IO
@@ -503,7 +673,7 @@ function ensure_zio!(f::ReadableFile)
     extralen = readle(f._io, UInt16)
     skip(f._io, filelen+extralen)
     if f.method == Deflate
-        f._zio = Zlib.Reader(f._io, true)
+        f._zio =  DeflateDecompressorStream(f._io)
     elseif f.method == Store
         f._zio = f._io
     end
@@ -514,7 +684,7 @@ end
 function update_reader!(f::ReadableFile, data::Array{UInt8})
     f._zpos = position(f._io) - f._datapos
     f._pos += length(data)
-    f._currentcrc32 = Zlib.crc32(data, f._currentcrc32)
+    f._currentcrc32 = crc32(data, f._currentcrc32)
 
     if eof(f)
         if f.method == Deflate
@@ -628,7 +798,9 @@ function addfile(w::Writer, name::AbstractString; method::Integer=Store, mtime::
 
     f._datapos = position(w._io)
     if f.method == Deflate
-        f._zio = Zlib.Writer(f._io, true)
+        f._zio = DeflateCompressorStream(f._io)
+    else
+        f._zio = f._io
     end
     w.files = [w.files; f]
     w._current = f
@@ -671,9 +843,16 @@ function unsafe_write(f::WritableFile, p::Ptr{UInt8}, nb::UInt)
         error("short write")
     end
 
-    f.crc32 = Zlib.crc32(unsafe_wrap(Array, p, nb), f.crc32)
+    f.crc32 = crc32(p, nb, f.crc32)
     f.uncompressedsize += n
     n
 end
+
+function crc32(data::Ptr{UInt8}, n::UInt, crc::UInt32=0x00000000)
+    return ccall((:crc32, "libz"), Culong, (Culong, Ptr{Cchar}, Cuint), crc, data, n) % UInt32
+end
+
+crc32(data::Vector{UInt8}, crc::UInt32) = GC.@preserve data crc32(pointer(data), UInt(length(data)), crc)
+crc32(s::String, crc::UInt32) = crc32(Vector{UInt8}(s), crc)
 
 end # module
