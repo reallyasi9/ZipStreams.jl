@@ -33,7 +33,7 @@ Julia
 Julia
 ```
 """
-module ZipFiles
+module ZipFile
 
 import Base: read, read!, eof, write, flush, close, mtime, position, show, unsafe_write
 using Printf
@@ -43,213 +43,26 @@ export read, read!, eof, write, close, mtime, position, show
 using CodecZlib
 using TranscodingStreams
 
-@enum Signature::UInt32 begin
-    LocalFileHeader=0x04034b50
-    ExtraDataRecord=0x08064b50
-    CentralDirectory=0x02014b50
-    DigitalSignature=0x05054b50
-    EndCentralDirectory=0x06054b50
-    Zip64EndCentralLocator=0x07064b50
-    Zip64EndCentralDirectory=0x06064b50
-end
-
-const ZIP_VERSION = 20
-
-@enum GeneralPurposeFlag::UInt16 begin
-    Encrypted=0x0001
-    CompressionOptions=0x0006
-    LocalHeaderSignatureEmpty=0x0008
-    PatchedData=0x0020
-    StrongEncryption=0x0040
-    LanguageEncoding=0x0800
-    LocalHeaderMasked=0x2000
-end
-
-@enum ImplodingOptions::UInt16 begin
-    Window8K=0x0002
-    ShannonFano3Trees=0x0004
-end
-
-@enum DeflatingOptions::UInt16 begin
-    Normal=0x0000
-    Maximum=0x0002
-    Fast=0x0004
-    SuperFast=0x0006
-end
-
-@enum LZMAOptions::UInt16 begin
-    LZMAEOS=0x0002
-end
-
-@enum CompressionMethod::UInt16 begin
-    Store=0
-    Shrink=1
-    Reduce1=2
-    Reduce2=3
-    Reduce3=4
-    Reduce4=5
-    Implode=6
-    Deflate=8
-    Deflate64=9
-    OldTERSE=10
-    BZIP2=12
-    LZMA=14
-    CMPSC=16
-    NewTERSE=18
-    LZ77=19
-    Zstd=93
-    MP3=94
-    XZ=95
-    JPEG=96
-    WavPack=97
-    PPMd=98
-    AEx=99
-end
-
-struct LocalFileHeader
-    signature::UInt32
-    version::UInt16
-    flags::UInt16
-    compression::UInt16
-    modtime::UInt16
-    moddate::UInt16
-    crc32::UInt32
-    compressed_size::UInt32
-    uncompressed_size::UInt32
-    file_name_length::UInt16
-    extra_field_length::UInt16
-
-    file_name::Vector{UInt8}
-    extra_field::Vector{UInt8}
-end
-
-struct EncryptionHeader
-    buffer::NTuple{12, UInt8}
-end
-
-struct DataDescriptor
-    crc32::UInt32
-    compressed_size::UInt32
-    uncompressed_size::UInt32
-end
-
-struct ArchiveExtraDataRecord
-    signature::UInt32
-    length::UInt32
-    data::Vector{UInt8}
-end
-
-struct CentralDirectoryHeader
-    signature::UInt32
-    version_made_by::UInt16
-    version_needed::UInt16
-    flags::UInt16
-    compression_method::UInt16
-    modtime::UInt16
-    moddate::UInt16
-    crc32::UInt32
-    compressed_size::UInt32
-    uncompressed_size::UInt32
-    file_name_length::UInt16
-    extra_field_length::UInt16
-    file_comment_length::UInt16
-    disk_number_start::UInt16
-    internal_attributes::UInt16
-    external_attributes::UInt32
-    local_header_offset::UInt32
-
-    file_name::Vector{UInt8}
-    extra_field::Vector{UInt8}
-    file_comment::Vector{UInt8}
-end
-
-struct DigitalSignature
-    signature::UInt32
-    length::UInt16
-    data::Vector{UInt8}
-end
-
-struct Zip64EndOfCentralDirectoryRecord
-    signature::UInt32
-    length::UInt64
-    version_made_by::UInt16
-    version_needed::UInt16
-    disk_number::UInt32
-    central_directory_disk::UInt32
-    entries_this_disk::UInt64
-    entries_total::UInt64
-    central_directory_length::UInt64
-    central_directory_offset::UInt64
-    
-    extensible_data::Vector{UInt8}
-end
-
-struct Zip64EndOfCentralDirectorLocator
-    signature::UInt32
-    end_of_central_directory_disk::UInt32
-    end_of_central_directory_offset::UInt64
-    total_disks::UInt32
-end
-
-struct EndOfCentralDirectoryRecord
-    signature::UInt32
-    disk_number::UInt16
-    central_directory_disk::UInt16
-    entries_this_disk::UInt16
-    entries_total::UInt16
-    central_directory_length::UInt32
-    central_directory_offset::UInt32
-    comment_length::UInt16
-    comment::Vector{UInt8}
-end
-
-struct FileData{C<:Codec,S<:IO} <: IO
-    header::LocalFileHeader
-    encryption_header::EncryptionHeader
-
-    data::TranscodingStream{C,S}
-
-    data_descriptor::DataDescriptor
-end
-
-"""
-    ZipFile
-
-
-For a full definition, see https://pkware.cachefly.net/webdocs/casestudies/APPNOTE.TXT.
-"""
-struct ZipFile
-    files::Vector{FileData}
-    archive_decryption_header::EncryptionHeader
-    extra_data::ArchiveExtraDataRecord
-    directory::Vector{CentralDirectoryHeader}
-    zip64_eod::Zip64EndOfCentralDirectoryRecord
-    zip64_eod_locator::Zip64EndOfCentralDirectorLocator
-    eod::EndOfCentralDirectoryRecord
-
-    _file_lookup::Dict{String,Int}
-end
-
 mutable struct ReadableFile <: IO
-    _io :: IO
-    name :: String   # filename
-    method :: UInt16            # compression method
-    dostime :: UInt16           # modification time in MS-DOS format
-    dosdate :: UInt16           # modification date in MS-DOS format
-    crc32 :: UInt32             # CRC32 of uncompressed data
-    compressedsize :: UInt64    # file size after compression
-    uncompressedsize :: UInt64  # size of uncompressed file
-    _offset :: UInt64
-    _datapos :: Int64   # position where data begins
-    _zio :: IO          # compression IO
+    _io::IO
+    name::String   # filename
+    method::UInt16            # compression method
+    dostime::UInt16           # modification time in MS-DOS format
+    dosdate::UInt16           # modification date in MS-DOS format
+    crc32::UInt32             # CRC32 of uncompressed data
+    compressedsize::UInt64    # file size after compression
+    uncompressedsize::UInt64  # size of uncompressed file
+    _offset::UInt64
+    _datapos::Int64   # position where data begins
+    _zio::IO          # compression IO
 
-    _currentcrc32 :: UInt32
-    _pos :: Int64       # current position in uncompressed data
-    _zpos :: Int64      # current position in compressed data
+    _currentcrc32::UInt32
+    _pos::Int64       # current position in uncompressed data
+    _zpos::Int64      # current position in compressed data
 
     function ReadableFile(io::IO, name::AbstractString, method::UInt16, dostime::UInt16,
-            dosdate::UInt16, crc32::UInt32, compressedsize::Unsigned,
-            uncompressedsize::Unsigned, _offset::Unsigned)
+        dosdate::UInt16, crc32::UInt32, compressedsize::Unsigned,
+        uncompressedsize::Unsigned, _offset::Unsigned)
         if method != Store && method != Deflate
             error("unknown compression method $method")
         end
@@ -267,10 +80,10 @@ Reader represents a ZIP file open for reading.
 Read a ZIP file from io or the file named filename.
 """
 mutable struct Reader
-    _io :: IO
-    _close_io :: Bool
-    files :: Vector{ReadableFile} # ZIP file entries that can be read concurrently
-    comment :: String  # ZIP file comment
+    _io::IO
+    _close_io::Bool
+    files::Vector{ReadableFile} # ZIP file entries that can be read concurrently
+    comment::String  # ZIP file comment
 
     function Reader(io::IO, close_io::Bool)
         endoff = _find_enddiroffset(io)
@@ -291,24 +104,24 @@ function Reader(filename::AbstractString)
 end
 
 mutable struct WritableFile <: IO
-    _io :: IO
-    name :: String   # filename
-    method :: UInt16            # compression method
-    dostime :: UInt16           # modification time in MS-DOS format
-    dosdate :: UInt16           # modification date in MS-DOS format
-    crc32 :: UInt32             # CRC32 of uncompressed data
-    compressedsize :: UInt32    # file size after compression
-    uncompressedsize :: UInt32  # size of uncompressed file
-    _offset :: UInt32
-    _datapos :: Int64   # position where data begins
-    _zio :: IO          # compression IO
+    _io::IO
+    name::String   # filename
+    method::UInt16            # compression method
+    dostime::UInt16           # modification time in MS-DOS format
+    dosdate::UInt16           # modification date in MS-DOS format
+    crc32::UInt32             # CRC32 of uncompressed data
+    compressedsize::UInt32    # file size after compression
+    uncompressedsize::UInt32  # size of uncompressed file
+    _offset::UInt32
+    _datapos::Int64   # position where data begins
+    _zio::IO          # compression IO
 
-    _closed :: Bool
+    _closed::Bool
 
     function WritableFile(io::IO, name::AbstractString, method::UInt16, dostime::UInt16,
-            dosdate::UInt16, crc32::UInt32, compressedsize::UInt32,
-            uncompressedsize::UInt32, _offset::UInt32, _datapos::Int64,
-            _zio::IO, _closed::Bool)
+        dosdate::UInt16, crc32::UInt32, compressedsize::UInt32,
+        uncompressedsize::UInt32, _offset::UInt32, _datapos::Int64,
+        _zio::IO, _closed::Bool)
         if method != Store && method != Deflate
             error("unknown compression method $method")
         end
@@ -328,11 +141,11 @@ Writer represents a ZIP file open for writing.
 Create a new ZIP file that will be written to io or the file named filename.
 """
 mutable struct Writer
-    _io :: IO
-    _close_io :: Bool
-    files :: Vector{WritableFile} # files (being) written
-    _current :: Union{WritableFile, Nothing}
-    _closed :: Bool
+    _io::IO
+    _close_io::Bool
+    files::Vector{WritableFile} # files (being) written
+    _current::Union{WritableFile,Nothing}
+    _closed::Bool
 
     function Writer(io::IO, close_io::Bool)
         x = new(io, close_io, WritableFile[], nothing, false)
@@ -350,15 +163,15 @@ function Writer(filename::AbstractString)
 end
 
 # Print out a summary of f in a human-readable format.
-function show(io::IO, f::Union{ReadableFile, WritableFile})
+function show(io::IO, f::Union{ReadableFile,WritableFile})
     print(io, "$(string(typeof(f)))(name=$(f.name), method=$(_Method2Str[f.method]), uncompresssedsize=$(f.uncompressedsize), compressedsize=$(f.compressedsize), mtime=$(mtime(f)))")
 end
 
 # Print out a summary of rw in a human-readable format.
-function show(io::IO, rw::Union{Reader, Writer})
+function show(io::IO, rw::Union{Reader,Writer})
     println(io, "$(string(typeof(rw))) for $(rw._io) containing $(length(rw.files)) files:\n")
     @printf(io, "%16s %-7s %-16s %s\n", "uncompressedsize", "method", "mtime", "name")
-    println(io, "-"^(16+1+7+1+16+1+4))
+    println(io, "-"^(16 + 1 + 7 + 1 + 16 + 1 + 4))
     for f in rw.files
         ftime = Libc.strftime("%Y-%m-%d %H-%M", mtime(f))
         @printf(io, "%16d %-7s %-16s %s\n",
@@ -402,33 +215,33 @@ _writele(io::IO, x::UInt32) = _writele(io, Vector{UInt8}(reinterpret(UInt8, [hto
 # a resolution of 2 seconds.
 function _msdostime(secs::Float64)
     t = Libc.TmStruct(secs)
-    dostime = UInt16((t.hour<<11) | (t.min<<5) | div(t.sec, 2))
-    dosdate = UInt16(((t.year+1900-1980)<<9) | ((t.month+1)<<5) | t.mday)
+    dostime = UInt16((t.hour << 11) | (t.min << 5) | div(t.sec, 2))
+    dosdate = UInt16(((t.year + 1900 - 1980) << 9) | ((t.month + 1) << 5) | t.mday)
     dostime, dosdate
 end
 
 # Convert MS-DOS time/date to seconds since epoch
 function _mtime(dostime::UInt16, dosdate::UInt16)
-    sec = 2*(dostime & 0x1f)
-    min = (dostime>>5) & 0x3f
-    hour = dostime>>11
+    sec = 2 * (dostime & 0x1f)
+    min = (dostime >> 5) & 0x3f
+    hour = dostime >> 11
     mday = dosdate & 0x1f
-    month = ((dosdate>>5) & 0xf) - 1
-    year = (dosdate>>9) + 1980 - 1900
+    month = ((dosdate >> 5) & 0xf) - 1
+    year = (dosdate >> 9) + 1980 - 1900
     time(Libc.TmStruct(sec, min, hour, mday, month, year, 0, 0, -1))
 end
 
 # Returns the modification time of f as seconds since epoch.
-function mtime(f::Union{ReadableFile, WritableFile})
+function mtime(f::Union{ReadableFile,WritableFile})
     _mtime(f.dostime, f.dosdate)
 end
 
 "Load a little endian `UInt32` from a `UInt8` vector `b` starting from index `i`"
 function getindex_u32le(b::Vector{UInt8}, i)
     b0 = UInt32(b[i])
-    b1 = UInt32(b[i + 1])
-    b2 = UInt32(b[i + 2])
-    b3 = UInt32(b[i + 3])
+    b1 = UInt32(b[i+1])
+    b2 = UInt32(b[i+2])
+    b3 = UInt32(b[i+3])
     return (b3 << 24) | (b2 << 16) | (b1 << 8) | b0
 end
 
@@ -439,17 +252,17 @@ function _find_sigoffset(io::IO, sig::UInt32)
 
     # Look for end of central directory locator in the last 1KB.
     # Failing that, look for it in the last 65KB.
-    for guess in [1024, 65*1024]
+    for guess in [1024, 65 * 1024]
         if offset !== nothing
             break
         end
         k = min(filesize, guess)
-        n = filesize-k
+        n = filesize - k
         seek(io, n)
         b = read!(io, Array{UInt8}(undef, k))
         for i in k-3:-1:1
             if getindex_u32le(b, i) == sig
-                offset = n+i-1
+                offset = n + i - 1
                 break
             end
         end
@@ -464,30 +277,30 @@ _find_enddiroffset(io::IO) = _find_sigoffset(io, _EndCentralDirSig)
 _find_zip64_enddirlocoffset(io::IO) = _find_sigoffset(io, _Zip64EndCentralLocSig)
 
 function _find_zip64_enddiroffset(io::IO, locoffset::Integer)
-	seek(io, locoffset)
-	if readle(io, UInt32) != _Zip64EndCentralLocSig
-		error("internal error")
-	end
-	skip(io, 4)
-	readle(io, UInt64) #the offset of the z64ecd
+    seek(io, locoffset)
+    if readle(io, UInt32) != _Zip64EndCentralLocSig
+        error("internal error")
+    end
+    skip(io, 4)
+    readle(io, UInt64) #the offset of the z64ecd
 end
 function _find_zip64_diroffset(io::IO, enddiroffset::Integer)
-	seek(io, enddiroffset)
-	if readle(io, UInt32) != _Zip64EndCentralDirSig
-		error("internal error")
-	end
-	skip(io, 8+2+2+4+4+8)
-	nfiles = readle(io, UInt64)
-	skip(io, 8) #skip size of central directory
-	offset = readle(io, UInt64)
-	offset, nfiles
+    seek(io, enddiroffset)
+    if readle(io, UInt32) != _Zip64EndCentralDirSig
+        error("internal error")
+    end
+    skip(io, 8 + 2 + 2 + 4 + 4 + 8)
+    nfiles = readle(io, UInt64)
+    skip(io, 8) #skip size of central directory
+    offset = readle(io, UInt64)
+    offset, nfiles
 end
 function _find_diroffset(io::IO, enddiroffset::Integer)
     seek(io, enddiroffset)
     if readle(io, UInt32) != _EndCentralDirSig
         error("internal error")
     end
-    skip(io, 2+2+2)
+    skip(io, 2 + 2 + 2)
     nfiles = read(io, UInt16)
     skip(io, 4)
     offset = readle(io, UInt32)
@@ -509,9 +322,9 @@ function _getfiles(io::IO, diroffset::Integer, nfiles::Integer)
         if readle(io, UInt32) != _CentralDirSig
             error("invalid file header")
         end
-        skip(io, 2+2)
+        skip(io, 2 + 2)
         flag = readle(io, UInt16)
-        if (flag & (1<<0)) != 0
+        if (flag & (1 << 0)) != 0
             error("encryption not supported")
         end
 
@@ -524,7 +337,7 @@ function _getfiles(io::IO, diroffset::Integer, nfiles::Integer)
         namelen = readle(io, UInt16)
         extralen = readle(io, UInt16)
         commentlen = readle(io, UInt16)
-        skip(io, 2+2+4)
+        skip(io, 2 + 2 + 4)
         offset = readle(io, UInt32)
         name = utf8_validate(read!(io, Array{UInt8}(undef, namelen)))
         extra = read!(io, Array{UInt8}(undef, extralen))
@@ -605,7 +418,7 @@ function flush(w::Writer)
         _writele(w._io, UInt32(0))
         _writele(w._io, UInt32(f._offset))
         _writele(w._io, b)
-        cdsize += 46+length(b)
+        cdsize += 46 + length(b)
     end
 
     # write end of central directory
@@ -641,7 +454,7 @@ function close(f::WritableFile)
 
     # fill in local file header fillers
     pos = position(f._io)
-    seek(f._io, f._offset+14)   # seek to CRC-32
+    seek(f._io, f._offset + 14)   # seek to CRC-32
     _writele(f._io, UInt32(f.crc32))
     _writele(f._io, UInt32(f.compressedsize))
     _writele(f._io, UInt32(f.uncompressedsize))
@@ -668,12 +481,12 @@ function ensure_zio!(f::ReadableFile)
     if readle(f._io, UInt32) != _LocalFileHdrSig
         error("invalid file header")
     end
-    skip(f._io, 2+2+2+2+2+4+4+4)
+    skip(f._io, 2 + 2 + 2 + 2 + 2 + 4 + 4 + 4)
     filelen = readle(f._io, UInt16)
     extralen = readle(f._io, UInt16)
-    skip(f._io, filelen+extralen)
+    skip(f._io, filelen + extralen)
     if f.method == Deflate
-        f._zio =  DeflateDecompressorStream(f._io)
+        f._zio = DeflateDecompressorStream(f._io)
     elseif f.method == Store
         f._zio = f._io
     end
@@ -690,7 +503,7 @@ function update_reader!(f::ReadableFile, data::Array{UInt8})
         if f.method == Deflate
             close(f._zio)
         end
-        if  f._currentcrc32 != f.crc32
+        if f._currentcrc32 != f.crc32
             error("crc32 do not match")
         end
     end
@@ -699,14 +512,14 @@ update_reader!(f::ReadableFile, data::UInt8) = update_reader!(f, [data])
 
 
 # Read data into a. Throws EOFError if a cannot be filled in completely.
-read(f::ReadableFile, a::Array{T}) where T = read!(f, Array{T}(undef, size(a)))
+read(f::ReadableFile, a::Array{T}) where {T} = read!(f, Array{T}(undef, size(a)))
 
 read!(f::ReadableFile, a::Array{UInt8}) = _read(f, a)
-read!(f::ReadableFile, a::Array{T}) where T = _read(f, a)
+read!(f::ReadableFile, a::Array{T}) where {T} = _read(f, a)
 
 function read(f::ReadableFile, ::Type{UInt8})
     ensure_zio!(f)
-    seek(f._io, f._datapos+f._zpos)
+    seek(f._io, f._datapos + f._zpos)
     byte = read(f._zio, UInt8)
     update_reader!(f, byte)
     byte
@@ -714,8 +527,8 @@ end
 
 function Base.unsafe_read(f::ReadableFile, p::Ptr{UInt8}, n::UInt)
     ensure_zio!(f)
-    seek(f._io, f._datapos+f._zpos)
-    b = unsafe_wrap(Array{UInt8, 1}, p, n)
+    seek(f._io, f._datapos + f._zpos)
+    b = unsafe_wrap(Array{UInt8,1}, p, n)
     read!(f._zio, b)
     update_reader!(f, b)
     nothing
@@ -726,22 +539,22 @@ function read(f::ReadableFile, nb::Integer=typemax(Int))
 
     nb = min(nb, f.uncompressedsize - f._pos)
     b = Vector{UInt8}(undef, nb)
-    seek(f._io, f._datapos+f._zpos)
+    seek(f._io, f._datapos + f._zpos)
     read!(f._zio, b)
     update_reader!(f, b)
 
     return b
 end
 
-function _read(f::ReadableFile, a::Array{T}) where T
+function _read(f::ReadableFile, a::Array{T}) where {T}
     ensure_zio!(f)
 
-    if eof(f) || f._pos+length(a)*sizeof(T) > f.uncompressedsize
+    if eof(f) || f._pos + length(a) * sizeof(T) > f.uncompressedsize
         throw(EOFError())
     end
 
-    seek(f._io, f._datapos+f._zpos)
-    b = unsafe_wrap(Array{UInt8, 1}, reinterpret(Ptr{UInt8}, pointer(a)), sizeof(a))
+    seek(f._io, f._datapos + f._zpos)
+    b = unsafe_wrap(Array{UInt8,1}, reinterpret(Ptr{UInt8}, pointer(a)), sizeof(a))
     GC.@preserve a begin
         read!(f._zio, b)
         update_reader!(f, b)
