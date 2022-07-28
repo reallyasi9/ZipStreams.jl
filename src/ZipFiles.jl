@@ -27,7 +27,7 @@ include("headers.jl")
 
 struct FileData{C<:TranscodingStreams.Codec,S<:IO} <: IO
     header::LocalFileHeader
-    encryption_header::EncryptionHeader
+    # encryption_header::EncryptionHeader # ISO requires this not be present
 
     data::TranscodingStream{C,S}
 

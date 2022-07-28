@@ -1,11 +1,12 @@
 using Dates
+using StringEncodings
 
 """
     readle(io, T)
 
-Read and return a value of type T from `i`o` in little-endian format.
+Read and return a value of type T read from `io` in little-endian format.
 """
-readle(io::IO, ::Type{T}) where T = htol(read(io, T))
+readle(io::IO, ::Type{T}) where T = ltoh(read(io, T))
 
 """
     bytearray(i)
@@ -14,10 +15,18 @@ Reinterpret a value `i` as an appropriately sized array of bytes.
 
 See: https://stackoverflow.com/a/70782597/5075720
 """
+bytearray(a::AbstractArray) = reinterpret(UInt8, a)
 bytearray(i::T) where T = reinterpret(UInt8, [i])
 
 """
-    readstring(io, [nb; validate_utf8=false])
+    bytesle2int(a, T)
+
+Reinterpret an array of little-endian bytes `a` as an integer of type T.
+"""
+bytesle2int(a::AbstractArray{UInt8}, ::Type{T}) where T<:Integer = first(reinterpret(T, ltoh(a)))
+
+"""
+    readstring(io, [nb; encoding="IBM437"])
 
 Try to read bytes from `io` into a `String`.
 
@@ -26,24 +35,19 @@ EOF is detected). Otherwise, all the remaining data will be read.
 
 Returns a tuple of the parsed `String` and the number of bytes read.
 
-If `validate_utf8` is `true`, will enforce that the parsed data is a valid UTF-8 string.
+The `encoding` parameter will enforce that particular encoding for the data. The
+returned `String` object will always be a proper UTF-8 string.
 """
-function readstring(io::IO, nb::Integer; validate_utf8::Bool=false)
+function readstring(io::IO, nb::Integer; encoding::Union{String, Encoding}=enc"IBM437")
     arr = Array{UInt8}(undef, nb)
     bytes_read = readbytes!(io, arr, nb)
-    s = String(arr)
-    if validate_utf8 && !isvalid(s)
-        error("data is not a valid UTF-8 encoded string")
-    end
+    s = decode(arr, encoding)
     return (s, bytes_read)
 end
 
-function readstring(io::IO; validate_utf8::Bool=false)
-    s = read(io, String)
+function readstring(io::IO; encoding::Union{String, Encoding}=enc"IBM437")
+    s = read(io, String, encoding)
     bytes_read = sizeof(s)
-    if validate_utf8 && !isvalid(s)
-        error("data is not a valid UTF-8 encoded string")
-    end
     return (s, bytes_read)
 end
 
