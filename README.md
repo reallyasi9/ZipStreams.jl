@@ -1,3 +1,6 @@
+# ZipFiles
+A Julia package to treat ZIP archives like a filesystem.
+
 ## Overview 
 
 This module provides support for reading and writing ZIP archives in Julia.
