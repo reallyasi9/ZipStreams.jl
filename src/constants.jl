@@ -8,7 +8,7 @@
     Zip64EndCentralDirectorySignature = 0x06064b50
 end
 
-const ZIP_VERSION = 20
+const ZIP_VERSION = 45
 
 @enum GeneralPurposeFlag::UInt16 begin
     # Encrypted = 0x0001 # Forbidden by ISO/IEC 21320-1
@@ -39,45 +39,45 @@ end
 # end
 
 @enum CompressionMethod::UInt16 begin
-    Store = 0
-    # Shrink = 1
-    # Reduce1 = 2
-    # Reduce2 = 3
-    # Reduce3 = 4
-    # Reduce4 = 5
-    # Implode = 6
-    Deflate = 8
-    # Deflate64 = 9
-    # OldTERSE = 10
-    # BZIP2 = 12
-    # LZMA = 14
-    # CMPSC = 16
-    # NewTERSE = 18
-    # LZ77 = 19
-    # Zstd = 93
-    # MP3 = 94
-    # XZ = 95
-    # JPEG = 96
-    # WavPack = 97
-    # PPMd = 98
-    # AEx = 99
+    StoreCompression = 0
+    # Shrink = 1 # Forbidden by ISO/IEC 21320-1
+    # Reduce1 = 2 # Forbidden by ISO/IEC 21320-1
+    # Reduce2 = 3 # Forbidden by ISO/IEC 21320-1
+    # Reduce3 = 4 # Forbidden by ISO/IEC 21320-1
+    # Reduce4 = 5 # Forbidden by ISO/IEC 21320-1
+    # Implode = 6 # Forbidden by ISO/IEC 21320-1
+    DeflateCompression = 8
+    # Deflate64 = 9 # Forbidden by ISO/IEC 21320-1
+    # OldTERSE = 10 # Forbidden by ISO/IEC 21320-1
+    # BZIP2 = 12 # Forbidden by ISO/IEC 21320-1
+    # LZMA = 14 # Forbidden by ISO/IEC 21320-1
+    # CMPSC = 16 # Forbidden by ISO/IEC 21320-1
+    # NewTERSE = 18 # Forbidden by ISO/IEC 21320-1
+    # LZ77 = 19 # Forbidden by ISO/IEC 21320-1
+    # Zstd = 93 # Forbidden by ISO/IEC 21320-1
+    # MP3 = 94 # Forbidden by ISO/IEC 21320-1
+    # XZ = 95 # Forbidden by ISO/IEC 21320-1
+    # JPEG = 96 # Forbidden by ISO/IEC 21320-1
+    # WavPack = 97 # Forbidden by ISO/IEC 21320-1
+    # PPMd = 98 # Forbidden by ISO/IEC 21320-1
+    # AEx = 99 # Forbidden by ISO/IEC 21320-1
 end
 
 @enum ExtraHeaderID::UInt16 begin
     Zip64Header = 0x0001
-    # AVInfo = 0x0007
-    # OS2 = 0x0009
-    # NTFS = 0x000a
-    # OpenVMS = 0x000c
-    # UNIX = 0x000d
-    # PatchDescriptor = 0x000f
-    # CertificateStore = 0x0014
-    # CentralDirectoryCertificateID = 0x0016
-    # StrongEncryptionHeader = 0x0017
-    # RecordManagementControls = 0x0018
-    # RecipientCertificateList = 0x0019
-    # PolicyDecryptionKey = 0x0021
-    # SmartcryptKeyProvider = 0x0022
-    # SmartcryptPolicyKeyData = 0x0023
-    # S390_AS400 = 0x0065
+    # AVInfoHeader = 0x0007
+    # OS2Header = 0x0009
+    # NTFSHeader = 0x000a
+    # OpenVMSHeader = 0x000c
+    # UNIXHeader = 0x000d
+    # PatchDescriptor = 0x000f # Forbidden by ISO/IEC 21320-1
+    # CertificateStore = 0x0014 # Forbidden by ISO/IEC 21320-1
+    # CentralDirectoryCertificateID = 0x0016 # Forbidden by ISO/IEC 21320-1
+    # StrongEncryptionHeader = 0x0017 # Forbidden by ISO/IEC 21320-1
+    # RecordManagementControls = 0x0018 # Forbidden by ISO/IEC 21320-1
+    # RecipientCertificateList = 0x0019 # Forbidden by ISO/IEC 21320-1
+    # PolicyDecryptionKey = 0x0021 # Forbidden by ISO/IEC 21320-1
+    # SmartcryptKeyProvider = 0x0022 # Forbidden by ISO/IEC 21320-1
+    # SmartcryptPolicyKeyData = 0x0023 # Forbidden by ISO/IEC 21320-1
+    # S390_AS400 = 0x0065 # Forbidden by ISO/IEC 21320-1
 end
