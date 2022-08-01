@@ -83,7 +83,7 @@ The general format is as follows:
 function msdos2datetime(dosdate::UInt16, dostime::UInt16)
     day = (dosdate & 0x1f) + 1
     month = (dosdate >> 5) & 0xf
-    year = ((dosdate >> 9)) + 1980
+    year = (dosdate >> 9) + 1980
 
     second = (dostime & 0x1f) * 2
     minute = (dostime >> 5) & 0x3f

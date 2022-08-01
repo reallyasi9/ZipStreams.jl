@@ -1,4 +1,4 @@
-import Base: bytesavailable, close, eof, isopen, read, unsafe_read, unsafe_write
+import Base: read
 
 using CodecZlib
 using Dates
@@ -24,7 +24,7 @@ function Base.read(io::IO, ::Type{ZipFileInformation})
     end
 
     version_needed = readle(io, UInt16)
-    if version_needed & 0xff > 45
+    if version_needed & 0xff > ZIP64_MINIMUM_VERSION
         @warn "Version needed exceeds ISO standard" version_needed
     end
 
@@ -39,7 +39,7 @@ function Base.read(io::IO, ::Type{ZipFileInformation})
     end
 
     compression_method = readle(io, UInt16)
-    if compression_method ∉ [COMPRESSION_STORE, COMPRESSION_DEFLATE]
+    if compression_method ∉ (COMPRESSION_STORE, COMPRESSION_DEFLATE)
         error("unimplemented compression method $(compression_method)")
     end
 
@@ -64,32 +64,35 @@ function Base.read(io::IO, ::Type{ZipFileInformation})
         error("EOF when reading file name")
     end
 
-    extradata = Array{UInt8}(undef, extrafield_length)
-    bytes_read = readbytes!(io, extradata, extrafield_length)
-    if bytes_read != extrafield_length
-        error("EOF when reading extra field")
-    end
-
-    extra_view = @view extradata[:]
+    extra_read = 0
     zip64 = false
-    while length(extra_view) > 0
-        ex_signature = bytesle2int(extra_view[1:2], UInt16)
-        ex_length = bytesle2int(extra_view[3:4], UInt16)
+    while extra_read < extrafield_length
+        ex_signature = readle(io, UInt16)
+        ex_length = readle(io, UInt16)
+        extra_read += 4
 
         if ex_signature != HEADER_ZIP64
-            extra_view = @view extra_view[5 + ex_length:end]
+            skip(io, ex_length)
+            extra_read += ex_length
             continue
         end
 
         # MUST include BOTH original and compressed file size fields per 4.5.3.
-        uncompressed_size = bytesle2int(extra_view[5:12], UInt64)
-        compressed_size = bytesle2int(extra_view[13:20], UInt64)
+        uncompressed_size = readle(io, UInt64)
+        compressed_size = readle(io, UInt64)
         zip64 = true
+        extra_read += ex_length
+        # NOTE: this is an assumption. Nothing in the spec says there can't be 
+        # more than one Zip64 header, nor what to do if such a case is found.
         break
+    end
+    # Skip past additional extra data that went unused
+    if extra_read < extrafield_length
+        skip(io, extrafield_length - extra_read)
     end
 
     return ZipFileInformation(
-        CompressionMethod(compression_method),
+        compression_method,
         uncompressed_size,
         compressed_size,
         last_modified,
@@ -115,9 +118,3 @@ function zipfile(info::ZipFileInformation, io::IO)
     return ZipFile(info, crc32stream)
 end
 
-Base.bytesavailable(s::ZipFile) = bytesavailable(s._io)
-Base.close(s::ZipFile) = close(s._io)
-Base.eof(s::ZipFile) = eof(s._io)
-Base.isopen(s::ZipFile) = isopen(s._io)
-Base.unsafe_read(s::ZipFile, p::Ptr{UInt8}, nb::UInt) = unsafe_read(s._io, p, nb)
-Base.unsafe_write(s::ZipFile, p::Ptr{UInt8}, nb::UInt) = unsafe_write(s._io, p, nb)

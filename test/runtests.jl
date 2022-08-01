@@ -1,5 +1,12 @@
+using Dates
 using Test
 using ZipFiles
+
+const EMPTY_FILE = joinpath(dirname(@__FILE__), "empty.zip")
+const EOCD_FILE = joinpath(dirname(@__FILE__), "EOCD.zip")
+const INFOZIP_FILE = joinpath(dirname(@__FILE__), "infozip.zip")
+const ZIP64_FILE = joinpath(dirname(@__FILE__), "zip64.zip")
+const ZIP64_2_FILE = joinpath(dirname(@__FILE__), "zip64-2.zip")
 
 @test Any[] == detect_ambiguities(Base, Core, ZipFiles)
 
@@ -99,6 +106,104 @@ end
     @test eof(s)
 end
 
+@testset "ZipStream" begin
+    @testset "ZipFileInformation" begin
+        tests = [
+            (
+                file=EMPTY_FILE,
+                expected=ErrorException("unexpected local file header signature $(ZipFiles.SIG_END_OF_CENTRAL_DIRECTORY)"),
+            ),
+            (
+                file=EOCD_FILE,
+                expected=[
+                    (
+                        offset=0,
+                        value=ZipFiles.ZipFileInformation(
+                            ZipFiles.COMPRESSION_STORE,
+                            8856,
+                            8856,
+                            DateTime(2020, 1, 17, 7, 54, 30),
+                            0x9105cddb,
+                            "TestA.xlsx",
+                            false,
+                            false,
+                        ),
+                    ),
+                ]
+            ),
+            (
+                file=INFOZIP_FILE,
+                expected=[
+                    (
+                        offset=0,
+                        value=ZipFiles.ZipFileInformation(
+                            ZipFiles.COMPRESSION_STORE,
+                            0,
+                            0,
+                            DateTime(2013, 7, 22, 18, 36, 32),
+                            0x00000000,
+                            "ziptest/",
+                            false,
+                            false,
+                        ),
+                    ),
+                    (
+                        offset=0x42,
+                        value=ZipFiles.ZipFileInformation(
+                            ZipFiles.COMPRESSION_DEFLATE,
+                            60,
+                            11,
+                            DateTime(2013, 7, 22, 18, 36, 32),
+                            0x9925b55b,
+                            "ziptest/julia.txt",
+                            false,
+                            false,
+                        ),
+                    ),
+                    (
+                        offset=0x98,
+                        value=ZipFiles.ZipFileInformation(
+                            ZipFiles.COMPRESSION_STORE,
+                            30,
+                            30,
+                            DateTime(2013, 7, 22, 18, 29, 58),
+                            0xcb652a62,
+                            "ziptest/info.txt",
+                            false,
+                            false,
+                        ),
+                    ),
+                    (
+                        offset=0x100,
+                        value=ZipFiles.ZipFileInformation(
+                            ZipFiles.COMPRESSION_STORE,
+                            13,
+                            13,
+                            DateTime(2013, 7, 22, 18, 27, 42),
+                            0x01d7afb4,
+                            "ziptest/hello.txt",
+                            false,
+                            false,
+                        ),
+                    ),
+                ],
+            ),
+        ]
+
+        for test in tests
+            open(test.file, "r") do f
+                if typeof(test.expected) <: Exception
+                    @test_throws test.expected read(f, ZipFiles.ZipFileInformation)
+                else
+                    for file in test.expected
+                        seek(f, file.offset)
+                        @test read(f, ZipFiles.ZipFileInformation) == file.value
+                    end
+                end
+            end
+        end
+    end
+end
 
 # function findfile(dir, name)
 #     for f in dir.files
