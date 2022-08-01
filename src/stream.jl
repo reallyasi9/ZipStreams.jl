@@ -2,15 +2,6 @@ using BufferedStreams
 
 import Base: bytesavailable, close, eof, isopen, unsafe_read, read
 
-const CRC32_INIT = 0x00000000
-
-function crc32(data::Ptr{UInt8}, n::UInt, crc::UInt32=CRC32_INIT)
-    return ccall((:crc32, "libz"), Culong, (Culong, Ptr{Cchar}, Cuint), crc, data, n) % UInt32
-end
-
-crc32(data::Vector{UInt8}, crc::UInt32=CRC32_INIT) = GC.@preserve data crc32(pointer(data), UInt(length(data)), crc)
-crc32(s::String, crc::UInt32=CRC32_INIT) = crc32(Vector{UInt8}(s), crc)
-
 """
     CRC32InputStream
 
@@ -45,6 +36,41 @@ function Base.read(s::CRC32InputStream, ::Type{UInt8})
     s.bytes_read += 1
     s.crc32 = crc32([x], s.crc32)
     return x
+end
+
+"""
+    CRC32OutputStream
+
+A wrapper around an IO object that that calculates a CRC-32 checksum for data
+written.
+"""
+mutable struct CRC32OutputStream{T} <: IO
+    sink::T
+    bytes_written::UInt64
+    crc32::UInt32
+end
+
+function CRC32OutputStream(sink::T) where {T}
+    return CRC32OutputStream{T}(sink, 0, CRC32_INIT)
+end
+
+Base.close(s::CRC32OutputStream) = close(s.sink)
+Base.eof(s::CRC32OutputStream) = eof(s.sink)
+Base.isopen(s::CRC32OutputStream) = isopen(s.sink)
+
+function Base.unsafe_write(s::CRC32OutputStream, p::Ptr{UInt8}, nb::UInt)
+    nw = unsafe_write(s.sink, p, nb)
+    # NOTE: might overflow
+    s.bytes_written += nw
+    s.crc32 = crc32(p, nw, s.crc32)
+    return nw
+end
+
+function Base.write(s::CRC32OutputStream, x::UInt8)
+    n = write(s.sink, x)
+    s.bytes_written += 1
+    s.crc32 = crc32([x], s.crc32)
+    return n
 end
 
 """
@@ -154,7 +180,6 @@ function Base.unsafe_read(s::SentinelInputStream, p::Ptr{UInt8}, nb::UInt)
             end
         else
             if isanchored(s.source)
-                # TODO: read anchored data
                 chunk = takeanchored!(s.source)
                 GC.@preserve chunk unsafe_copyto!(p + i - 1, pointer(chunk), length(chunk))
             end
@@ -197,10 +222,10 @@ standards-compliant. However, one can build the Central Directory information
 while streaming the data and check validity later (if ever) for faster reading
 and processing of a Zip archive.
 
-ZipStream objects are IOStream objects, allowing you to read data from the
-archive byte-by-byte. Because this is usually not useful, ZipStream objects
-can also be iterated to produce IO-like ZipFile objects (in archive order)
-and can be addressed with Filesystem-like methods to access particular files.
+ZipStream objects are IO objects, allowing you to read data from the archive
+byte-by-byte. Because this is usually not useful, ZipStream objects can also be
+iterated to produce IO-like ZipFile objects (in archive order) and can be
+addressed with Filesystem-like methods to access particular files.
 
 # Examples
 """

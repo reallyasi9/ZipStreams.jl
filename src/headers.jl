@@ -33,7 +33,7 @@ function Base.read(io::IO, ::Type{ExtraDataRecord})
     data_read = readbytes!(io, data, len)
 
     # Error checking
-    signature == Integer(Zip64Header) && len ∉ [0, 8, 16, 24, 28] && error("Zip64 extra data can only have lengths of 16, 24, or 28 bytes, got $len")
+    signature == HEADER_ZIP64 && len ∉ [0, 8, 16, 24, 28] && error("Zip64 extra data can only have lengths of 16, 24, or 28 bytes, got $len")
     data_read != len && error("EOF encountered when reading extra data: expected $len, got $data_read")
 
     return ExtraDataRecord(
@@ -48,7 +48,7 @@ end
 Determine if `r` is Zip64 Extra Data record.
 """
 function iszip64_record(r::ExtraDataRecord)
-    return r.signature == Integer(Zip64Header)
+    return r.signature == HEADER_ZIP64
 end
 
 """
@@ -241,7 +241,7 @@ function Base.read(io::IO, ::Type{CentralDirectory})
     skip(io, 4)
     local_header_offset = readle(io, UInt32) # If ==0xffffffff, check for Zip64 in extra data
 
-    encoding = (flags & Integer(LanguageEncodingFlag)) != 0 ? enc"UTF-8" : enc"IBM437"
+    encoding = (flags & FLAG_LANGUAGE_ENCODING) != 0 ? enc"UTF-8" : enc"IBM437"
     (file_name, file_name_read) = readstring(io, file_name_length; encoding=encoding)
     # Parse extra fields
     extra_bytes_read = 0
@@ -256,9 +256,9 @@ function Base.read(io::IO, ::Type{CentralDirectory})
     moddatetime = msdos2datetime(moddate, modtime)
 
     # Check errors
-    signature != Integer(CentralDirectorySignature) && error("incorrect signature of Central Directory record: expected $(string(Integer(CentralDirectorySignature), base=16)), got $(string(signature, base=16))")
-    compression_method ∉ (Integer(Store), Integer(Deflate)) && error("ISO/IEC 21320-1 standard requires compression method $Store ($(string(Integer(Store), base=16))) or $Deflate ($(string(Integer(Deflate), base=16))), got $(string(compression_method, base=16))")
-    warn_zip64 = version_made_by < 45 || version_needed < 45
+    signature != SIG_CENTRAL_DIRECTORY && error("incorrect signature of Central Directory record: expected $(string(SIG_CENTRAL_DIRECTORY, base=16)), got $(string(signature, base=16))")
+    compression_method ∉ (COMPRESSION_STORE, COMPRESSION_DEFLATE) && error("ISO/IEC 21320-1 standard requires compression method $Store ($(string(COMPRESSION_STORE, base=16))) or $Deflate ($(string(COMPRESSION_DEFLATE, base=16))), got $(string(compression_method, base=16))")
+    warn_zip64 = version_made_by < ZIP64_MINIMUM_VERSION || version_needed < ZIP64_MINIMUM_VERSION
     if warn_zip64
         compressed_size == typemax(compressed_size) && @warn "version made by or needed is insufficient to use Zip64 extensions for compressed size" version_made_by version_needed
         uncompressed_size == typemax(uncompressed_size) && @warn "version made by or needed is insufficient to use Zip64 extensions for uncompressed size" version_made_by version_needed
@@ -348,7 +348,7 @@ function Base.read(io::IO, ::Type{Zip64EndOfCentralDirectoryRecord})
     # extensible_data = Array{UInt8}(undef, ed_length)
     # ed_read = readbytes!(io, extensible_data, ed_length)
 
-    signature != Integer(Zip64EndCentralDirectorySignature) && error("incorrect signature of EoCD64 record: expected $(string(Integer(Zip64EndCentralDirectorySignature), base=16)), got $(string(signature, base=16))")
+    signature != SIG_ZIP64_END_OF_CENTRAL_DIRECTORY && error("incorrect signature of EoCD64 record: expected $(string(SIG_ZIP64_END_OF_CENTRAL_DIRECTORY, base=16)), got $(string(signature, base=16))")
     length > 44 && @warn "record length implies reserved extensible data field used: expected length 44, got $length"
     length < 44 && error("record length too short: expected length >=44, got $length")
     version_made_by & 0xff < 45 && @warn "version made by is insufficient to create Zip64 records: expected version >= 45, got $version_made_by"
@@ -390,7 +390,7 @@ function Base.read(io::IO, ::Type{Zip64EndOfCentralDirectoryLocator})
     offset = readle(io, UInt64)
     total_disks = readle(io, UInt32)
 
-    signature != Integer(Zip64EndCentralLocatorSignature) && error("incorrect signature of EoCD64 locator record: expected $(string(Integer(Zip64EndCentralLocatorSignature), base=16)), got $(string(signature, base=16))")
+    signature != SIG_ZIP64_CENTRAL_DIRECTORY_LOCATOR && error("incorrect signature of EoCD64 locator record: expected $(string(SIG_ZIP64_CENTRAL_DIRECTORY_LOCATOR, base=16)), got $(string(signature, base=16))")
     total_disks != 1 && error("ISO/IEC 21320-1 standard prohibits archives spanning multiple volumes: expected total disks equal to 1, got $total_disks")
 
     return Zip64EndOfCentralDirectoryLocator(disk_number, offset)
@@ -440,7 +440,7 @@ function Base.read(io::IO, ::Type{EndOfCentralDirectoryRecord})
     (comment, comment_read_bytes) = readstring(io, comment_length)
 
     # error checking
-    signature != Integer(EndCentralDirectorySignature) && error("incorrect signature of EoCD record: expected $(string(Integer(EndCentralDirectorySignature), base=16)), got $(string(signature, base=16))")
+    signature != SIG_END_OF_CENTRAL_DIRECTORY && error("incorrect signature of EoCD record: expected $(string(SIG_END_OF_CENTRAL_DIRECTORY, base=16)), got $(string(signature, base=16))")
     disk_number != central_directory_disk && error("ISO/IEC 21320-1 standard prohibits archives spanning multiple volumes: expected disk number ($disk_number) to equal disk number of start of central directory ($central_directory_disk)")
     entries_this_disk != entries_total && error("ISO/IEC 21320-1 standard prohibits archives spanning multiple volumes: expected entries this disk ($entries_this_disk) to equal entries total ($entries_total)")
     comment_read_bytes != comment_length && error("EOF reached reading comment: expected to read $comment_length, only read $comment_read_bytes")

@@ -53,7 +53,7 @@ const ZIP64_2_FILE = joinpath(dirname(@__FILE__), "zip64-2.zip")
 
     @testset "Zip64 End of Central Directory Locator" begin
         exception = ErrorException(
-            "signature $(string(Integer(ZipFiles.Zip64EndCentralLocatorSignature), base=16)) not found",
+            "signature $(string(ZipFiles.SIG_ZIP64_CENTRAL_DIRECTORY_LOCATOR, base=16)) not found",
         )
         tests = [
             (file=EMPTY_FILE, expected=exception),
@@ -86,7 +86,7 @@ const ZIP64_2_FILE = joinpath(dirname(@__FILE__), "zip64-2.zip")
 
     @testset "Zip64 End of Central Directory" begin
         exception = ErrorException(
-            "signature $(string(Integer(ZipFiles.Zip64EndCentralDirectorySignature), base=16)) not found",
+            "signature $(string(ZipFiles.SIG_ZIP64_END_OF_CENTRAL_DIRECTORY, base=16)) not found",
         )
         tests = [
             (file=EMPTY_FILE, expected=exception),

@@ -1,83 +1,69 @@
-@enum Signature::UInt32 begin
-    LocalFileHeaderSignature = 0x04034b50
-    ExtraDataRecordSignature = 0x08064b50
-    CentralDirectorySignature = 0x02014b50
-    # DigitalSignatureSignature = 0x05054b50 # Forbidden by ISO/IEC 21320-1
-    EndCentralDirectorySignature = 0x06054b50
-    Zip64EndCentralLocatorSignature = 0x07064b50
-    Zip64EndCentralDirectorySignature = 0x06064b50
-end
+const SIG_LOCAL_FILE = 0x04034b50
+const SIG_EXTRA_DATA = 0x08064b50
+const SIG_CENTRAL_DIRECTORY = 0x02014b50
+const SIG_DIGITAL_SIGNATURE = 0x05054b50 # Forbidden by ISO/IEC 21320-1
+const SIG_END_OF_CENTRAL_DIRECTORY = 0x06054b50
+const SIG_ZIP64_CENTRAL_DIRECTORY_LOCATOR = 0x07064b50
+const SIG_ZIP64_END_OF_CENTRAL_DIRECTORY = 0x06064b50
 
-const ZIP_VERSION = 45
+const ZIP64_MINIMUM_VERSION = UInt16(45)
 
-@enum GeneralPurposeFlag::UInt16 begin
-    # Encrypted = 0x0001 # Forbidden by ISO/IEC 21320-1
-    CompressionOptionsFlags = 0x0006
-    LocalHeaderSignatureEmptyFlag = 0x0008
-    # PatchedData = 0x0020 # Forbidden by ISO/IEC 21320-1
-    # StrongEncryption = 0x0040 # Forbidden by ISO/IEC 21320-1
-    LanguageEncodingFlag = 0x0800
-    # LocalHeaderMasked = 0x2000 # Forbidden by ISO/IEC 21320-1
-end
+const MASK_COMPRESSION_OPTIONS = 0x0006
+
+const FLAG_FILE_SIZE_FOLLOWS = 0x0008
+const FLAG_PATCHED_DATA = 0x0020 # Forbidden by ISO/IEC 21320-1
+const FLAG_STRONG_ENCRYPTION = 0x0040 # Forbidden by ISO/IEC 21320-1
+const FLAG_LANGUAGE_ENCODING = 0x0800
+const FLAG_HEADER_MASKED = 0x2000 # Forbidden by ISO/IEC 21320-1
 
 # Forbidden by ISO/IEC 21320-1
-# @enum ImplodeOption::UInt16 begin
-#     Window8K = 0x0002
-#     ShannonFano3Trees = 0x0004
-# end
+const OPTION_IMPLODE_WINDOW_8K = 0x0002
+const OPTION_IMPLODE_SF_3TREES = 0x0004
 
-@enum DeflateOption::UInt16 begin
-    DeflateNormal = 0x0000
-    DeflateMaximum = 0x0002
-    DeflateFast = 0x0004
-    DeflateSuperFast = 0x0006
-end
+const OPTION_DEFLATE_NORMAL = 0x0000
+const OPTION_DEFLATE_MAXIMUM = 0x0002
+const OPTION_DEFLATE_FAST = 0x0004
+const OPTION_DEFLATE_SUPER_FAST = 0x0006
 
 # Forbidden by ISO/IEC 21320-1
-# @enum LZMAOption::UInt16 begin
-#     LZMAEOS = 0x0002
-# end
+const OPTION_LZMA_EOS = 0x0002
 
-@enum CompressionMethod::UInt16 begin
-    StoreCompression = 0
-    # Shrink = 1 # Forbidden by ISO/IEC 21320-1
-    # Reduce1 = 2 # Forbidden by ISO/IEC 21320-1
-    # Reduce2 = 3 # Forbidden by ISO/IEC 21320-1
-    # Reduce3 = 4 # Forbidden by ISO/IEC 21320-1
-    # Reduce4 = 5 # Forbidden by ISO/IEC 21320-1
-    # Implode = 6 # Forbidden by ISO/IEC 21320-1
-    DeflateCompression = 8
-    # Deflate64 = 9 # Forbidden by ISO/IEC 21320-1
-    # OldTERSE = 10 # Forbidden by ISO/IEC 21320-1
-    # BZIP2 = 12 # Forbidden by ISO/IEC 21320-1
-    # LZMA = 14 # Forbidden by ISO/IEC 21320-1
-    # CMPSC = 16 # Forbidden by ISO/IEC 21320-1
-    # NewTERSE = 18 # Forbidden by ISO/IEC 21320-1
-    # LZ77 = 19 # Forbidden by ISO/IEC 21320-1
-    # Zstd = 93 # Forbidden by ISO/IEC 21320-1
-    # MP3 = 94 # Forbidden by ISO/IEC 21320-1
-    # XZ = 95 # Forbidden by ISO/IEC 21320-1
-    # JPEG = 96 # Forbidden by ISO/IEC 21320-1
-    # WavPack = 97 # Forbidden by ISO/IEC 21320-1
-    # PPMd = 98 # Forbidden by ISO/IEC 21320-1
-    # AEx = 99 # Forbidden by ISO/IEC 21320-1
-end
+const COMPRESSION_STORE = UInt16(0)
+const COMPRESSION_SHRINK = UInt16(1) # Forbidden by ISO/IEC 21320-1
+const COMPRESSION_REDUCE1 = UInt16(2) # Forbidden by ISO/IEC 21320-1
+const COMPRESSION_REDUCE2 = UInt16(3) # Forbidden by ISO/IEC 21320-1
+const COMPRESSION_REDUCE3 = UInt16(4) # Forbidden by ISO/IEC 21320-1
+const COMPRESSION_REDUCE4 = UInt16(5) # Forbidden by ISO/IEC 21320-1
+const COMPRESSION_IMPLODE = UInt16(6) # Forbidden by ISO/IEC 21320-1
+const COMPRESSION_DEFLATE = UInt16(8)
+const COMPRESSION_DEFLATE64 = UInt16(9) # Forbidden by ISO/IEC 21320-1
+const COMPRESSION_OLD_TERSE = UInt16(10) # Forbidden by ISO/IEC 21320-1
+const COMPRESSION_BZIP2 = UInt16(12) # Forbidden by ISO/IEC 21320-1
+const COMPRESSION_LZMA = UInt16(14) # Forbidden by ISO/IEC 21320-1
+const COMPRESSION_CMPSC = UInt16(16) # Forbidden by ISO/IEC 21320-1
+const COMPRESSION_TERSE = UInt16(18) # Forbidden by ISO/IEC 21320-1
+const COMPRESSION_LZ77 = UInt16(19) # Forbidden by ISO/IEC 21320-1
+const COMPRESSION_ZSTD = UInt16(93) # Forbidden by ISO/IEC 21320-1
+const COMPRESSION_MP3 = UInt16(94) # Forbidden by ISO/IEC 21320-1
+const COMPRESSION_XZ = UInt16(95) # Forbidden by ISO/IEC 21320-1
+const COMPRESSION_JPEG = UInt16(96) # Forbidden by ISO/IEC 21320-1
+const COMPRESSION_WAVPACK = UInt16(97) # Forbidden by ISO/IEC 21320-1
+const COMPRESSION_PPMD = UInt16(98) # Forbidden by ISO/IEC 21320-1
+const COMPRESSION_AEX = UInt16(99) # Forbidden by ISO/IEC 21320-1
 
-@enum ExtraHeaderID::UInt16 begin
-    Zip64Header = 0x0001
-    # AVInfoHeader = 0x0007
-    # OS2Header = 0x0009
-    # NTFSHeader = 0x000a
-    # OpenVMSHeader = 0x000c
-    # UNIXHeader = 0x000d
-    # PatchDescriptor = 0x000f # Forbidden by ISO/IEC 21320-1
-    # CertificateStore = 0x0014 # Forbidden by ISO/IEC 21320-1
-    # CentralDirectoryCertificateID = 0x0016 # Forbidden by ISO/IEC 21320-1
-    # StrongEncryptionHeader = 0x0017 # Forbidden by ISO/IEC 21320-1
-    # RecordManagementControls = 0x0018 # Forbidden by ISO/IEC 21320-1
-    # RecipientCertificateList = 0x0019 # Forbidden by ISO/IEC 21320-1
-    # PolicyDecryptionKey = 0x0021 # Forbidden by ISO/IEC 21320-1
-    # SmartcryptKeyProvider = 0x0022 # Forbidden by ISO/IEC 21320-1
-    # SmartcryptPolicyKeyData = 0x0023 # Forbidden by ISO/IEC 21320-1
-    # S390_AS400 = 0x0065 # Forbidden by ISO/IEC 21320-1
-end
+const HEADER_ZIP64 = 0x0001
+const HEADER_AV_INFO = 0x0007
+const HEADER_OS2 = 0x0009
+const HEADER_NTFS = 0x000a
+const HEADER_OPENVMS = 0x000c
+const HEADER_UNIX = 0x000d
+const HEADER_PATCH_DESCRIPTOR = 0x000f # Forbidden by ISO/IEC 21320-1
+const HEADER_CERTIFICATE_STORE = 0x0014 # Forbidden by ISO/IEC 21320-1
+const HEADER_CENTRAL_DIRECTORY_CERTIFICATE_ID = 0x0016 # Forbidden by ISO/IEC 21320-1
+const HEADER_STRONG_ENCRYPTION = 0x0017 # Forbidden by ISO/IEC 21320-1
+const HEADER_RECORD_MANAGEMENT_CONTROLS = 0x0018 # Forbidden by ISO/IEC 21320-1
+const HEADER_RECIPIENT_CERTIFICATE_LIST = 0x0019 # Forbidden by ISO/IEC 21320-1
+const HEADER_POLICY_DECRYPTION_KEY = 0x0021 # Forbidden by ISO/IEC 21320-1
+const HEADER_SMARTCRYPT_KEY_PROVIDER = 0x0022 # Forbidden by ISO/IEC 21320-1
+const HEADER_SMARTCRYPT_POLICY_KEY_DATA = 0x0023 # Forbidden by ISO/IEC 21320-1
+const HEADER_S390_AS400 = 0x0065 # Forbidden by ISO/IEC 21320-1

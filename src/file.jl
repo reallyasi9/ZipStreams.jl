@@ -5,7 +5,7 @@ using Dates
 using TranscodingStreams
 
 struct ZipFileInformation
-    compression_method::CompressionMethod
+    compression_method::UInt16
     uncompressed_size::UInt64
     compressed_size::UInt64
     last_modified::DateTime
@@ -19,7 +19,7 @@ end
 
 function Base.read(io::IO, ::Type{ZipFileInformation})
     signature = readle(io, UInt32)
-    if signature != Integer(LocalFileHeaderSignature)
+    if signature != SIG_LOCAL_FILE
         error("unexpected local file header signature $(signature)")
     end
 
@@ -29,17 +29,18 @@ function Base.read(io::IO, ::Type{ZipFileInformation})
     end
 
     flags = readle(io, UInt16)
-    if (flags & ~(Integer(CompressionOptionsFlags) | Integer(LocalHeaderSignatureEmptyFlag) | Integer(LanguageEncodingFlag))) != 0
+    if (flags & ~(MASK_COMPRESSION_OPTIONS | FLAG_FILE_SIZE_FOLLOWS | FLAG_LANGUAGE_ENCODING)) != 0
         @warn "Unsupported general purpose flags detected" flags
     end
-    descriptor_follows = (flags & Integer(LocalHeaderSignatureEmptyFlag)) != 0
+    descriptor_follows = (flags & FLAG_FILE_SIZE_FOLLOWS) != 0
+    # FIXME: this should be forcable with heavy warnings
+    if descriptor_follows
+        error("stream-archived data cannot be extracted reliably without reading the Central Directory")
+    end
 
     compression_method = readle(io, UInt16)
-    if compression_method ∉ [Integer(StoreCompression), Integer(DeflateCompression)]
+    if compression_method ∉ [COMPRESSION_STORE, COMPRESSION_DEFLATE]
         error("unimplemented compression method $(compression_method)")
-    end
-    if compression_method == Integer(StoreCompression) && descriptor_follows
-        error("stream-archived data (flag 3) cannot be extracted reliably without reading the Central Directory")
     end
 
     modtime = readle(io, UInt16)
@@ -57,7 +58,7 @@ function Base.read(io::IO, ::Type{ZipFileInformation})
     filename_length = readle(io, UInt16)
     extrafield_length = readle(io, UInt16)
 
-    encoding = (flags & Integer(LanguageEncodingFlag)) != 0 ? enc"UTF-8" : enc"IBM437"
+    encoding = (flags & FLAG_LANGUAGE_ENCODING) != 0 ? enc"UTF-8" : enc"IBM437"
     (filename, bytes_read) = readstring(io, filename_length; encoding=encoding)
     if bytes_read != filename_length
         error("EOF when reading file name")
@@ -75,7 +76,7 @@ function Base.read(io::IO, ::Type{ZipFileInformation})
         ex_signature = bytesle2int(extra_view[1:2], UInt16)
         ex_length = bytesle2int(extra_view[3:4], UInt16)
 
-        if ex_signature != Integer(Zip64Header)
+        if ex_signature != HEADER_ZIP64
             extra_view = @view extra_view[5 + ex_length:end]
             continue
         end
@@ -100,16 +101,18 @@ function Base.read(io::IO, ::Type{ZipFileInformation})
 
 end
 
-struct ZipFile{C<:TranscodingStreams.Codec,S<:IO} <: IO
+struct ZipFile{S<:IO} <: IO
     info::ZipFileInformation
-    _io::TranscodingStream{C,S}
+    _io::S
 end
 
-function ZipFile{C}(info::ZipFileInformation, io::IO) where (C<:TranscodingStreams.Codec)
+function zipfile(info::ZipFileInformation, io::IO)
     truncstream = TruncatedStream(io, info.compressed_size)
-    crc32stream = CRC32Stream(truncstream)
-    transstream = TranscodingStream(C(), crc32stream)
-    return ZipFile{C,CRC32Stream}(info, transstream)
+    # FIXME
+    C = info.compression_method == DeflateCompression ? CodecZlib.DeflateCompressor : TranscodingStreams.Noop
+    transstream = TranscodingStream(C(), truncstream)
+    crc32stream = CRC32Stream(transstream)
+    return ZipFile(info, crc32stream)
 end
 
 Base.bytesavailable(s::ZipFile) = bytesavailable(s._io)
