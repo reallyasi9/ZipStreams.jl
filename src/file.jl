@@ -33,10 +33,6 @@ function Base.read(io::IO, ::Type{ZipFileInformation})
         @warn "Unsupported general purpose flags detected" flags
     end
     descriptor_follows = (flags & FLAG_FILE_SIZE_FOLLOWS) != 0
-    # FIXME: this should be forcable with heavy warnings
-    if descriptor_follows
-        error("stream-archived data cannot be extracted reliably without reading the Central Directory")
-    end
 
     compression_method = readle(io, UInt16)
     if compression_method ∉ (COMPRESSION_STORE, COMPRESSION_DEFLATE)
@@ -52,7 +48,7 @@ function Base.read(io::IO, ::Type{ZipFileInformation})
     uncompressed_size = UInt64(readle(io, UInt32))
 
     if descriptor_follows && ((crc32 > 0) || (compressed_size > 0) || (uncompressed_size > 0))
-        error("general purpose flag 3 requires non-zero CRC-32, compressed size, and uncompressed size fields")
+        @warn "general purpose flag 3 requires non-zero CRC-32, compressed size, and uncompressed size fields" flags crc32 compressed_size uncompressed_size
     end
 
     filename_length = readle(io, UInt16)
