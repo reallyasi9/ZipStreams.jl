@@ -123,23 +123,6 @@ function disk_number(r::ExtraDataRecord)
     return bytesle2int(view(r.data, 25:28), UInt32)
 end
 
-struct LocalFileHeader
-    # signature::UInt32 # == LocalFileHeaderSignature
-    # version::UInt16 # ISO requires <=45
-    flags::UInt16 # ISO requires only (zero-indexed) bits 1-3 and 11 be used, and that bit 11 must be set if any byte in the name or comment is > 0x7f
-    compression::UInt16 # ISO requires STORE or DEFLATE
-    # modtime::UInt16 # Parsed to DateTime
-    # moddate::UInt16 # Parsed to DateTime
-    crc32::UInt32 # Set to 0 if flags & 0x8
-    compressed_size::UInt32 # Set to 0 if flags & 0x8
-    uncompressed_size::UInt32 # Set to 0 if flags & 0x8
-    # file_name_length::UInt16 # Parsed to String
-    # extra_field_length::UInt16 # Parsed to extra data
-
-    file_name::String
-    extra_data::Vector{ExtraDataRecord}
-end
-
 # struct EncryptionHeader # Prohibited by ISO
 #     buffer::NTuple{12,UInt8}
 # end
@@ -150,51 +133,7 @@ struct DataDescriptor{T<:Unsigned} # Must be present if flags & 0x8
     uncompressed_size::T  # 64 bits if Zip64, otherwise 32 bits
 end
 
-"""
-    CentralDirectory
 
-An in-memory representation of the Zip64 Central Directory (CD) record.
-
-See: 4.3.12 of https://pkware.cachefly.net/webdocs/casestudies/APPNOTE.TXT.
-
-# Notes
-- ISO/IEC 21320-1 requires disk spanning _not_ be used. However, the disk number
-itself is arbitrary.
-
-- APPNOTE specifies version 45 as the minimum version for reading and writing
-Zip64 files. ISO/IEC 21320-1 requires that the version number be no greater than
-45. The specification is not clear whether applications are allowed to lie about
-what version number was used to create the file, but ISO/IEC 21320-1 is clear
-that the maximum value for version needed to extract is 45.
-
-- APPNOTE 4.4.2 states that the upper byte of version made by can be ignored
-("Software _can_ use this information..."). The specification not clear whether
-the upper byte of version needed to extract can be treated the same way. This
-implementation ignores the upper byte.
-
-- ISO/IEC 21320-1 requires only certain bits of the general purpose bit flags
-are allowed to be set.
-
-- ISO/IEC 21320-1 allows only two types of compression: Store (0) and Deflate
-(8).
-
-- Internal and external file attributes are presently not used and set to zero
-when writing.
-
-- The specification is not clear whether the presence of Zip64 extra data within
-the Central Directory requires that the Zip64 EoCD and Zip64 EoCD locator be
-present in the archive (and vice versa). This implementation assumes that the
-two different Zip64 data records are independent; however, if any file within
-the archive is larger than 2^32-1 bytes or begins past an offset of 2^32-1,
-both types of Zip64 data records will be present in the archive due to
-requiring a 64-bit field to represent either the file size or file offset, and
-the specification that the Central Directory occur after all file data in the
-archive.
-
-- The specification is not clear about what to do in the case where there are
-multiple extra data records of the same kind. This implementation treats this
-case as an error.
-"""
 struct CentralDirectory
     # signature::UInt32 # == CentralDirectoryHeaderSignature
     # version_made_by::UInt16 # >=45 needed for Zip64

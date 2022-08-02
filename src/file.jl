@@ -4,24 +4,46 @@ using CodecZlib
 using Dates
 using TranscodingStreams
 
+"""
+    ZipFileInformation
+
+This is an immutable struct representing file information in a Zip archive.
+
+Each file has information stored in two places in a Zip archive: once in a header
+preceeding each file stored in the archive, and once again in a "central
+directory" at the end of the archive. The format of the information in the two
+locations is nearly identicaly, with key differences in record lengths and orders
+that prevents a completely shared means of parsing the two.
+
+`ZipFileInformation` structs can be parsed from a Zip archive using the
+`Base.read` method for either a `LocalFileHeader` or `CentralDirectoryHeader`
+object. The `ZipFileInformation` struct will be present in those structs as the
+`info` field.
+"""
 struct ZipFileInformation
     compression_method::UInt16
     uncompressed_size::UInt64
     compressed_size::UInt64
     last_modified::DateTime
     crc32::UInt32
+    offset::UInt64
 
     name::String
+    comment::String
 
     descriptor_follows::Bool
+    utf8::Bool
     zip64::Bool
 end
 
-function Base.read(io::IO, ::Type{ZipFileInformation})
-    signature = readle(io, UInt32)
-    if signature != SIG_LOCAL_FILE
-        error("unexpected local file header signature $(signature)")
+function Base.read(io::IO, ::Type{ZipFileInformation}, signature::UInt32)
+    offset = UInt64(position(io)) # NOTE: if central_directory, will be replaced later
+
+    sig = readle(io, UInt32)
+    if sig != signature
+        error("unexpected signature $(signature), expected $(sig)")
     end
+    central_directory = sig == SIG_CENTRAL_DIRECTORY
 
     version_needed = readle(io, UInt16)
     if version_needed & 0xff > ZIP64_MINIMUM_VERSION
@@ -32,7 +54,11 @@ function Base.read(io::IO, ::Type{ZipFileInformation})
     if (flags & ~(MASK_COMPRESSION_OPTIONS | FLAG_FILE_SIZE_FOLLOWS | FLAG_LANGUAGE_ENCODING)) != 0
         @warn "Unsupported general purpose flags detected" flags
     end
+    utf8 = (flags & FLAG_LANGUAGE_ENCODING) != 0
     descriptor_follows = (flags & FLAG_FILE_SIZE_FOLLOWS) != 0
+    if descriptor_follows && central_directory
+        error("file size signature not allowed to follow central directory record")
+    end
 
     compression_method = readle(io, UInt16)
     if compression_method ∉ (COMPRESSION_STORE, COMPRESSION_DEFLATE)
@@ -47,14 +73,26 @@ function Base.read(io::IO, ::Type{ZipFileInformation})
     compressed_size = UInt64(readle(io, UInt32))
     uncompressed_size = UInt64(readle(io, UInt32))
 
-    if descriptor_follows && ((crc32 > 0) || (compressed_size > 0) || (uncompressed_size > 0))
-        @warn "general purpose flag 3 requires non-zero CRC-32, compressed size, and uncompressed size fields" flags crc32 compressed_size uncompressed_size
-    end
-
     filename_length = readle(io, UInt16)
     extrafield_length = readle(io, UInt16)
 
-    encoding = (flags & FLAG_LANGUAGE_ENCODING) != 0 ? enc"UTF-8" : enc"IBM437"
+    # This is where the central directory and the local header differ.
+    comment_length = UInt16(0)
+    if central_directory
+        comment_length = readle(io, UInt16)
+        
+        disk = readle(io, UInt16)
+        if disk ∉ (0,1)
+            @warn "Archives spanning multiple disks are not supported" disk
+        end
+
+        # ignore attributes--don't know what to do with them just yet
+        skip(io, 6)
+
+        offset = UInt64(readle(io, UInt32))
+    end
+
+    encoding = utf8 ? enc"UTF-8" : enc"IBM437"
     (filename, bytes_read) = readstring(io, filename_length; encoding=encoding)
     if bytes_read != filename_length
         error("EOF when reading file name")
@@ -73,18 +111,45 @@ function Base.read(io::IO, ::Type{ZipFileInformation})
             continue
         end
 
-        # MUST include BOTH original and compressed file size fields per 4.5.3.
-        uncompressed_size = readle(io, UInt64)
-        compressed_size = readle(io, UInt64)
+        # MUST include BOTH original and compressed file size fields in local header per 4.5.3.
+        # Can have any number of fields in central directory, but MUST be in the same fixed order.
+        nfields = central_directory ? min(ex_length ÷ 8, 3) : 2
+        # MUST have 0xffffffff for sizes in original record per 4.5.3.
+        if nfields >= 1
+            if uncompressed_size != typemax(UInt32)
+                error("Zip64-encoded does not signal uncompressed size: expected $(typemax(UInt32)), got $(uncompressed_size)")
+            end
+            uncompressed_size = readle(io, UInt64)
+        end
+        if nfields >= 2
+            if compressed_size != typemax(UInt32)
+                error("Zip64-encoded does not signal compressed size: expected $(typemax(UInt32)), got $(compressed_size)")
+            end
+            compressed_size = readle(io, UInt64)
+        end
+        if nfields >= 3
+            if offset != typemax(UInt32)
+                error("Zip64-encoded does not signal offset: expected $(typemax(UInt32)), got $(offset)")
+            end
+            offset = readle(io, UInt64)
+        end
+
         zip64 = true
         extra_read += ex_length
         # NOTE: this is an assumption. Nothing in the spec says there can't be 
         # more than one Zip64 header, nor what to do if such a case is found.
         break
     end
+
     # Skip past additional extra data that went unused
     if extra_read < extrafield_length
         skip(io, extrafield_length - extra_read)
+    end
+
+    # comment_length will be zero here if not central directory
+    (comment, bytes_read) = readstring(io, comment_length; encoding=encoding)
+    if bytes_read != comment_length
+        error("EOF when reading comment")
     end
 
     return ZipFileInformation(
@@ -93,24 +158,115 @@ function Base.read(io::IO, ::Type{ZipFileInformation})
         compressed_size,
         last_modified,
         crc32,
+        offset,
         filename,
+        comment,
         descriptor_follows,
+        utf8,
         zip64,
     )
 
 end
 
-struct ZipFile{S<:IO} <: IO
+"""
+    LocalFileHeader
+
+An in-memory representation of the information contained in a Zip file local
+header.
+
+See: 4.3.7 of https://pkware.cachefly.net/webdocs/casestudies/APPNOTE.TXT
+"""
+struct LocalFileHeader
     info::ZipFileInformation
-    _io::S
 end
 
-function zipfile(info::ZipFileInformation, io::IO)
-    truncstream = TruncatedStream(io, info.compressed_size)
-    # FIXME
-    C = info.compression_method == DeflateCompression ? CodecZlib.DeflateCompressor : TranscodingStreams.Noop
+function Base.read(io::IO, ::Type{LocalFileHeader})
+    info = read(io, ZipFileInformation, SIG_LOCAL_FILE)
+    return LocalFileHeader(info)
+end
+
+"""
+    CentralDirectoryHeader
+
+An in-memory representation of the Zip64 Central Directory (CD) record.
+
+See: 4.3.12 of https://pkware.cachefly.net/webdocs/casestudies/APPNOTE.TXT.
+
+# Notes
+- ISO/IEC 21320-1 requires disk spanning _not_ be used. However, the disk number
+itself is arbitrary.
+
+- APPNOTE specifies version 45 as the minimum version for reading and writing
+Zip64 files. ISO/IEC 21320-1 requires that the version number be no greater than
+45. The specification is not clear whether applications are allowed to lie about
+what version number was used to create the file, but ISO/IEC 21320-1 is clear
+that the maximum value for version needed to extract is 45.
+
+- APPNOTE 4.4.2 states that the upper byte of version made by can be ignored
+("Software _can_ use this information..."). The specification not clear whether
+the upper byte of version needed to extract can be treated the same way. This
+implementation ignores the upper byte.
+
+- ISO/IEC 21320-1 requires only certain bits of the general purpose bit flags
+are allowed to be set.
+
+- ISO/IEC 21320-1 allows only two types of compression: Store (0) and Deflate
+(8).
+
+- Internal and external file attributes are presently not used and set to zero
+when writing.
+
+- The specification is not clear whether the presence of Zip64 extra data within
+the Central Directory requires that the Zip64 EoCD and Zip64 EoCD locator be
+present in the archive (and vice versa). This implementation assumes that the
+two different Zip64 data records are independent; however, if any file within
+the archive is larger than 2^32-1 bytes or begins past an offset of 2^32-1,
+both types of Zip64 data records will be present in the archive due to
+requiring a 64-bit field to represent either the file size or file offset, and
+the specification that the Central Directory occur after all file data in the
+archive.
+
+- The specification is not clear about what to do in the case where there are
+multiple extra data records of the same kind. This implementation treats this
+case as an error.
+"""
+struct CentralDirectoryHeader
+    info::ZipFileInformation
+end
+
+function Base.read(io::IO, ::Type{CentralDirectoryHeader})
+    info = read(io, ZipFileInformation, SIG_CENTRAL_DIRECTORY)
+    return CentralDirectoryHeader(info)
+end
+
+mutable struct ZipFile{S<:IO} <: IO
+    info::ZipFileInformation
+    source::S
+end
+
+function zipfile(info::ZipFileInformation, io::IO; validate_on_close::Bool=true)
+    truncstream = TruncatedInputStream(io, info.compressed_size)
+    C = info.compression_method == DeflateCompression ? CodecZlib.DeflateDecompressor : TranscodingStreams.Noop
     transstream = TranscodingStream(C(), truncstream)
-    crc32stream = CRC32Stream(transstream)
-    return ZipFile(info, crc32stream)
+    crc32stream = CRC32InputStream(transstream)
+
+    zf = ZipFile(info, crc32stream)
+    if validate_on_close
+        finalizer(validate, zf)
+    end
+    return zf
+end
+
+function validate(zf::ZipFile)
+    if zf.source.crc32 != zf.info.crc32
+        error("CRC32 check failed: expected $(zf.info.crc32), got $(zf.source.crc32)")
+    end
+    if zf.source.bytes_read != zf.info.compressed_size
+        error("bytes read check failed: expected $(zf.info.compressed_size), got $(zf.source.bytes_read)")
+    end
+end
+
+function zipfile(f::F, info::ZipFileInformation, io::IO; validate_on_close::Bool=true) where {F <: Function}
+    zipfile(info, io; validate_on_close=validate_on_close) |> f
 end
 

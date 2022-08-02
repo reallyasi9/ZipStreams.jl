@@ -69,19 +69,29 @@ The general format is as follows:
 * Date:
 | Bits | Description |
 |:-----|:------------|
-| 0-4 | Day of the month (0x00 = 1st, 0x01 = 2nd, ..., 0x1F = 31st) |
+| 0-4 | Day of the month (0x01 = 1st, 0x02 = 2nd, ..., 0x1F = 31th) |
 | 5-8 | Month (0x1 = January, 0x2 = February, ..., 0xC = December) |
 | 9-15 | Year from 1980 (0x00 = 1980, 0x01 = 1981, ..., 0x7F = 2107) |
+
+Note that day and month equal to `0x00` is not defined. We choose to raise an
+exception if these cases are encountered. Months greater than `0xC` will also
+throw an exception.
 
 * Time:
 | Bits | Description |
 |:-----|:------------|
-| 0-4 | Second divided by 2 (0x00 = :00, 0x01 = :01, ..., 0x1d = :59) |
+| 0-4 | Second divided by 2 (0x00 = :00, 0x01 = :02, ..., 0x1d = :58) |
 | 5-10 | Minute (0x00 = :00:, 0x01 = :01:, ..., 0x3b = :59:) |
 | 11-15 | Hour (0x00 = 00:, 0x01 = 01:, ..., 0x17 = 23:) |
+
+Note that the smallest unit of time is 2 seconds. `0x1e == 60` seconds and
+`0x1f == 62` seconds are valid values, but there is no clear specification for how
+they should be interpreted. There is likewise no specification for handling'
+minutes greater than `0x3b` or hours greater than `0x17`. We choose to raise an
+exception.
 """
 function msdos2datetime(dosdate::UInt16, dostime::UInt16)
-    day = (dosdate & 0x1f) + 1
+    day = (dosdate & 0x1f)
     month = (dosdate >> 5) & 0xf
     year = (dosdate >> 9) + 1980
 

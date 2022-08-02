@@ -10,6 +10,34 @@ const ZIP64_2_FILE = joinpath(dirname(@__FILE__), "zip64-2.zip")
 
 @test Any[] == detect_ambiguities(Base, Core, ZipFiles)
 
+@testset "MSDOSDateTime" begin
+    @testset "Year0Days" begin
+        for month in 0b000000000:0b000100000:0b111100000
+            for day in 0b00000:0b00001:0b11111
+                if month == 0 || month>>5 > 12 || day == 0 || day > 31 || isnothing(tryparse(Date, "1980-$(string(month>>5, base=10))-$(string(day, base=10))"))
+                    @test_throws ArgumentError ZipFiles.msdos2datetime(UInt16(month | day), 0x0000)
+                else
+                    @test ZipFiles.msdos2datetime(UInt16(month | day), 0x0000) == DateTime(1980, month>>5, day, 0, 0, 0)
+                end
+            end
+        end
+    end
+    @testset "Day1Times" begin
+        # Note: Julia considers 24:00:00 to be equal to 00:00:00 the next day
+        for hour in 0b0000000000000000:0b100000000000:0b1111100000000000
+            for minute in 0b00000000000:0b00000100000:0b11111100000
+                for second in 0b00000:0b00001:0b11111
+                    if (hour>>11 > 23 || minute>>5 > 59 || second*2 >= 60) && !(hour>>11 == 24 && minute>>5 == 0 && second == 0)
+                        @test_throws ArgumentError ZipFiles.msdos2datetime(0x0021, UInt16(hour | minute | second))
+                    else
+                        @test ZipFiles.msdos2datetime(0x0021, UInt16(hour | minute | second)) == DateTime(1980, 1, 1, hour>>11, minute>>5, second*2)
+                    end
+                end
+            end
+        end
+    end
+end
+
 @testset "CRC32" begin
     @testset "Array" begin
         @test ZipFiles.crc32(UInt8[]) == 0x00000000
@@ -107,11 +135,11 @@ end
 end
 
 @testset "ZipStream" begin
-    @testset "ZipFileInformation" begin
+    @testset "LocalFileHeader" begin
         tests = [
             (
                 file=EMPTY_FILE,
-                expected=ErrorException("unexpected local file header signature $(ZipFiles.SIG_END_OF_CENTRAL_DIRECTORY)"),
+                expected=ErrorException,
             ),
             (
                 file=EOCD_FILE,
@@ -122,9 +150,12 @@ end
                             ZipFiles.COMPRESSION_STORE,
                             8856,
                             8856,
-                            DateTime(2020, 1, 17, 7, 54, 30),
+                            DateTime(2020, 1, 16, 7, 54, 30),
                             0x9105cddb,
+                            0,
                             "TestA.xlsx",
+                            "",
+                            false,
                             false,
                             false,
                         ),
@@ -140,9 +171,12 @@ end
                             ZipFiles.COMPRESSION_STORE,
                             0,
                             0,
-                            DateTime(2013, 7, 22, 18, 36, 32),
+                            DateTime(2013, 7, 21, 18, 36, 32),
                             0x00000000,
+                            0,
                             "ziptest/",
+                            "",
+                            false,
                             false,
                             false,
                         ),
@@ -153,9 +187,12 @@ end
                             ZipFiles.COMPRESSION_DEFLATE,
                             60,
                             11,
-                            DateTime(2013, 7, 22, 18, 36, 32),
+                            DateTime(2013, 7, 21, 18, 36, 32),
                             0x9925b55b,
+                            0x42,
                             "ziptest/julia.txt",
+                            "",
+                            false,
                             false,
                             false,
                         ),
@@ -166,9 +203,12 @@ end
                             ZipFiles.COMPRESSION_STORE,
                             30,
                             30,
-                            DateTime(2013, 7, 22, 18, 29, 58),
+                            DateTime(2013, 7, 21, 18, 29, 58),
                             0xcb652a62,
+                            0x98,
                             "ziptest/info.txt",
+                            "",
+                            false,
                             false,
                             false,
                         ),
@@ -179,9 +219,12 @@ end
                             ZipFiles.COMPRESSION_STORE,
                             13,
                             13,
-                            DateTime(2013, 7, 22, 18, 27, 42),
+                            DateTime(2013, 7, 21, 18, 27, 42),
                             0x01d7afb4,
+                            0x100,
                             "ziptest/hello.txt",
+                            "",
+                            false,
                             false,
                             false,
                         ),
@@ -192,12 +235,12 @@ end
 
         for test in tests
             open(test.file, "r") do f
-                if typeof(test.expected) <: Exception
-                    @test_throws test.expected read(f, ZipFiles.ZipFileInformation)
+                if typeof(test.expected) <: Type
+                    @test_throws test.expected read(f, ZipFiles.LocalFileHeader)
                 else
                     for file in test.expected
                         seek(f, file.offset)
-                        @test read(f, ZipFiles.ZipFileInformation) == file.value
+                        @test read(f, ZipFiles.LocalFileHeader).info == file.value
                     end
                 end
             end
