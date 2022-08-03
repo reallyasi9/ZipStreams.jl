@@ -1,4 +1,4 @@
-import Base: read
+import Base: read, eof, seek
 
 using CodecZlib
 using Dates
@@ -41,7 +41,7 @@ function Base.read(io::IO, ::Type{ZipFileInformation}, signature::UInt32)
 
     sig = readle(io, UInt32)
     if sig != signature
-        error("unexpected signature $(signature), expected $(sig)")
+        error("unexpected signature $(sig), expected $(signature)")
     end
     central_directory = sig == SIG_CENTRAL_DIRECTORY
 
@@ -239,25 +239,106 @@ function Base.read(io::IO, ::Type{CentralDirectoryHeader})
     return CentralDirectoryHeader(info)
 end
 
-mutable struct ZipFile{S<:IO} <: IO
+"""
+    seek_to_directory(io)
+
+Seek `io` to the first Central Directory record.
+
+If `io` does not have the ability to seek, bytes will be read from `io` using
+`read(io)` until the first CD record is found. If seekable, `io` will start at the
+end and read backward, which might be more efficient for large files.
+"""
+function seek_to_directory(io::IO)
+    try
+        _seek_to_directory_backward(io)
+    catch 
+        _seek_to_directory_forward(io)
+    end
+end
+
+function _seek_to_directory_backward(io::IO)
+    # with no comment, the EoCD record will be the last 22 bytes. Try that first.
+    seekend(io)
+    skip(io, -22)
+    try
+        # TODO: implement me
+        seek_backward_to(io, SIG_END_OF_CENTRAL_DIRECTORY)
+    catch
+        # No record: seek to the end and return
+        seekend(io)
+        return
+    end
+
+    mark(io)
+    skip(io, 16) # move to offset
+    start_of_cd = UInt64(readle(io, UInt32))
+    if start_of_cd != typemax(UInt32)
+        seek(io, start_of_cd + 4) # skip header!
+        unmark(io)
+        return
+    end
+
+    # zip64 required
+    reset(io)
+    skip(io, -20) # beginning of zip64 EoCD locator
+    sig = readle(io, UInt32)
+    if sig != SIG_ZIP64_CENTRAL_DIRECTORY_LOCATOR
+        error("Zip64 end of central directory locator required: expected signature $(SIG_ZIP64_CENTRAL_DIRECTORY_LOCATOR) at position $(position(io)-sizeof(SIG_ZIP64_CENTRAL_DIRECTORY_LOCATOR)), got $(sig)")
+    end
+    skip(io, 4) # skip disk number
+    offset = readle(io, UInt64) # beginning of zip64 EoCD
+
+    seek(io, offset)
+    sig = readle(io, UInt32)
+    if sig != SIG_ZIP64_END_OF_CENTRAL_DIRECTORY
+        error("Zip64 end of central directory required: expected signature $(SIG_ZIP64_END_OF_CENTRAL_DIRECTORY) at position $(position(io)-sizeof(SIG_ZIP64_END_OF_CENTRAL_DIRECTORY)), got $(sig)")
+    end
+    skip(io, 42) # skip to offset
+    start_of_cd = readle(io, UInt64)
+    seek(io, start_of_cd + 4) # skip header!
+    return
+end
+
+function _seek_to_directory_forward(io::IO)
+    sentinel = reinterpret(UInt8, [htol(SIG_CENTRAL_DIRECTORY)])
+    readuntil(io, sentinel)
+    return
+end
+
+mutable struct ZipFileInputStream{S<:IO} <: IO
     info::ZipFileInformation
-    source::S
+    source::CRC32InputStream{S} # maybe make this parameterized to allow writing?
 end
 
 function zipfile(info::ZipFileInformation, io::IO; validate_on_close::Bool=true)
     truncstream = TruncatedInputStream(io, info.compressed_size)
-    C = info.compression_method == DeflateCompression ? CodecZlib.DeflateDecompressor : TranscodingStreams.Noop
+    C = info.compression_method == COMPRESSION_DEFLATE ? CodecZlib.DeflateDecompressor : TranscodingStreams.Noop
     transstream = TranscodingStream(C(), truncstream)
     crc32stream = CRC32InputStream(transstream)
 
-    zf = ZipFile(info, crc32stream)
+    zf = ZipFileInputStream(info, crc32stream)
     if validate_on_close
         finalizer(validate, zf)
     end
     return zf
 end
 
-function validate(zf::ZipFile)
+function zipfile(f::F, info::ZipFileInformation, io::IO; validate_on_close::Bool=true) where {F <: Function}
+    zipfile(info, io; validate_on_close=validate_on_close) |> f
+end
+
+"""
+    validate(zf)
+
+Validate that the contents read from an archived file match the information stored
+in the header.
+
+When called, this method will read through the remainder of the archived file
+until EOF is reached.
+"""
+function validate(zf::ZipFileInputStream)
+    # read the remainder of the file
+    read(zf.source)
     if zf.source.crc32 != zf.info.crc32
         error("CRC32 check failed: expected $(zf.info.crc32), got $(zf.source.crc32)")
     end
@@ -266,7 +347,5 @@ function validate(zf::ZipFile)
     end
 end
 
-function zipfile(f::F, info::ZipFileInformation, io::IO; validate_on_close::Bool=true) where {F <: Function}
-    zipfile(info, io; validate_on_close=validate_on_close) |> f
-end
-
+Base.read(zf::ZipFileInputStream) = read(zf.source)
+Base.eof(zf::ZipFileInputStream) = eof(zf.source)

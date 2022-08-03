@@ -18,9 +18,9 @@ module ZipFiles
 include("crc32.jl")
 include("io.jl")
 include("constants.jl")
-include("headers.jl")
 include("stream.jl")
 include("file.jl")
+include("archive.jl")
 
 
 end # module
