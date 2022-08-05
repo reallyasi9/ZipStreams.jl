@@ -108,3 +108,47 @@ function datetime2msdos(datetime::DateTime)
     dostime = UInt16(second(datetime) ÷ 2) | (UInt16(minute(datetime)) << 5) | (UInt16(hour(datetime)) << 11)
     return dosdate, dostime
 end
+
+"""
+    seek_backward_to(io, signature)
+
+Seek an IO stream backward until `signature` is found.
+
+Actually jumps backward 4k at a time, then searches forward for the last matching
+signature in the chunk. This repeats until `signature` is found or until the
+algorithm attempts to seek backward when `position(io) == 0`.
+
+On success, the stream's position is set to the starting byte of the last found
+signature in the stream.
+
+Seeks to `seekend(io)` if the signature is not found.
+"""
+function seek_backward_to(io::IO, signature::Union{UInt8,Vector{UInt8}})
+    # TODO: This number was pulled out of a hat. Should probably be tuned.
+    nbytes = 4096
+    # Initialize to zeros to avoid accidental matches in dirty memory.
+    cache = zeros(UInt8, nbytes)
+    skip(io, -nbytes)
+    # Move back some large number of bytes per jump, but make sure there is
+    # enough overlap to find the signature if the last jump stradled the line.
+    jump_distance = nbytes - sizeof(signature) + 1
+    while true
+        mark(io)
+        last_time = position(io) == 0
+        read!(io, cache)
+        pos = findlast(cache, signature)
+        if !isnothing(pos)
+            reset(io)
+            skip(io, first(pos)-1)
+            break
+        end
+        if last_time
+            unmark(io)
+            seekend(io)
+            break
+        end
+        reset(io)
+        skip(io, -jump_distance)
+    end
+    return
+end

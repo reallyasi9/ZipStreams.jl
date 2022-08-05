@@ -1,6 +1,7 @@
 using Dates
 using Test
 using ZipFiles
+using Random
 
 const EMPTY_FILE = joinpath(dirname(@__FILE__), "empty.zip")
 const EOCD_FILE = joinpath(dirname(@__FILE__), "EOCD.zip")
@@ -132,6 +133,18 @@ end
     @test_broken bytesavailable(s) == 15
     @test read(s, String) == "The quick brown"
     @test eof(s)
+end
+
+@testset "Seek backward" begin
+    fake_data = UInt8.(rand('a':'z', 10_000))
+    
+    # FOO at end
+    signature = UInt8.(collect("FOO"))
+    fake_data[end-2:end] .= signature
+    stream = IOBuffer(fake_data)
+    seekend(stream)
+    ZipFiles.seek_backward_to(stream, signature)
+    @test position(stream) == length(fake_data)-2
 end
 
 @testset "ZipStream" begin
