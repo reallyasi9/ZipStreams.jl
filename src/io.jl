@@ -136,7 +136,7 @@ function seek_backward_to(io::IO, signature::Union{UInt8,Vector{UInt8}})
         mark(io)
         last_time = position(io) == 0
         read!(io, cache)
-        pos = findlast(cache, signature)
+        pos = findlast(signature, cache)
         if !isnothing(pos)
             reset(io)
             skip(io, first(pos)-1)

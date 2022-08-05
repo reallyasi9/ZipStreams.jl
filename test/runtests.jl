@@ -136,15 +136,64 @@ end
 end
 
 @testset "Seek backward" begin
-    fake_data = UInt8.(rand('a':'z', 10_000))
-    
-    # FOO at end
-    signature = UInt8.(collect("FOO"))
-    fake_data[end-2:end] .= signature
-    stream = IOBuffer(fake_data)
-    seekend(stream)
-    ZipFiles.seek_backward_to(stream, signature)
-    @test position(stream) == length(fake_data)-2
+    @testset "End" begin
+        fake_data = UInt8.(rand('a':'z', 10_000))
+        signature = UInt8.(collect("FOO"))
+        fake_data[end-2:end] .= signature
+        stream = IOBuffer(fake_data)
+        seekend(stream)
+        ZipFiles.seek_backward_to(stream, signature)
+        @test position(stream) == length(fake_data)-length(signature) # streams are zero indexed
+    end
+
+    @testset "Random" begin
+        signature = UInt8.(collect("BAR"))
+        for i in 1:100
+            fake_data = UInt8.(rand('a':'z', 10_000))
+            pos = rand(1:length(fake_data)-length(signature)+1)
+            fake_data[pos:pos+length(signature)-1] .= signature
+            stream = IOBuffer(fake_data)
+            seekend(stream)
+            ZipFiles.seek_backward_to(stream, signature)
+            @test position(stream) == pos-1 # streams are zero indexed
+            @test read(stream, length(signature)) == signature
+        end
+    end
+
+    @testset "Multiple" begin
+        signature = UInt8.(collect("BAZ"))
+        fake_data = UInt8.(rand('a':'z', 10_000))
+        fake_data[1001:1003] .= signature
+        fake_data[9001:9003] .= signature
+        stream = IOBuffer(fake_data)
+        seekend(stream)
+        ZipFiles.seek_backward_to(stream, signature)
+        @test position(stream) == 9000
+        @test read(stream, length(signature)) == signature
+    end
+
+    @testset "Multiple same block" begin
+        signature = UInt8.(collect("BIN"))
+        fake_data = UInt8.(rand('a':'z', 10_000))
+        fake_data[9991:9993] .= signature
+        fake_data[9981:9983] .= signature
+        stream = IOBuffer(fake_data)
+        seekend(stream)
+        ZipFiles.seek_backward_to(stream, signature)
+        @test position(stream) == 9990
+        @test read(stream, length(signature)) == signature
+    end
+
+    @testset "Straddle 4k" begin
+        signature = UInt8.(collect("Hello, Julia!"))
+        fake_data = UInt8.(rand('a':'z', 10_000))
+        fake_data[end-4100:end-4088] .= signature
+        stream = IOBuffer(fake_data)
+        seekend(stream)
+        ZipFiles.seek_backward_to(stream, signature)
+        @test position(stream) == length(fake_data) - 4101
+        @test read(stream, length(signature)) == signature
+    end
 end
 
 @testset "ZipStream" begin
