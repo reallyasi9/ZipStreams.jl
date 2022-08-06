@@ -5,7 +5,7 @@ import Base: HasEltype, IteratorEltype, IteratorSize, SizeUnknown, close, eltype
 
 A wrapper around an IO stream that includes information about an archived file. 
 
-Use the `filestream(info, io)` method to properly construct a `ZipFileInputStream`
+Use the [`filestream`](@ref) method to properly construct a `ZipFileInputStream`
 from an arbitrary IO object.
 """
 mutable struct ZipFileInputStream{S<:IO} <: IO
@@ -58,22 +58,32 @@ Base.eof(zf::ZipFileInputStream) = eof(zf.source)
 
 A read-only lazy streamable representation of a Zip archive.
 
-Zip archive files are optimized for reading from the beginning of the archive
-_and_ appending to the end of the archive. Because information about what files
-are stored in the archive are recorded at the end of the file, a Zip archive
-technically cannot be validated unless the entire file is present, making
-reading a Zip archive sequentially from a stream of data technically not
-standards-compliant. However, one can build the Central Directory information
-while streaming the data and check validity later (if ever) for faster reading
-and processing of a Zip archive.
+The authoritative record of files present in a Zip archive is stored in the
+Central Directory at the end of the archive. This allows for easy appending of new
+files to the archive by overwriting the Central Directory and adding a new
+Central Directory with the updated contents afterward. It also allows for easy
+deletion of files from the old archive by overwriting the Central Directory with
+the updated contents and relying on compliant Zip archive extraction programs
+ignoring the actual bytes in the file and only trusting the new Central Directory.
 
-ZipArchiveInputStream objects can also be iterated to produce read-only IO objects
-(in archive order) which, when read, produce the decompressed information from the
-archived file.
+Unfortunately, this choice makes reading the contents of a Zip archive
+sub-optimal, especially over streaming IO interfaces like networks, where seeking
+to the end of the file requires reading all of the file's contents first.
 
-Create a `ZipArchiveInputStream` using the `zipstream` method.
+However, this package chooses not to be a compliant Zip archive reader. By
+ignoring the Central Directory, one can begin extracting data from a Zip archive
+immediately upon reading the first Local File Header record it sees in the stream,
+greatly reducing latency to first read on large files, and also reducing the
+amount of data necessary to cache on disk or in memory.
 
-# Examples
+A `ZipArchiveInputStream` is a wapper around an `IO` object that allows the user
+to extract files as they are read from the stream instead of waiting to read the
+file information from the Central Directory at the end of the stream.
+
+`ZipArchiveInputStream` objects can be iterated. Each iteration returns an IO
+object that will lazily extract (and decompress) file data from the archive.
+
+Create `ZipArchiveInputStream` objects using the [`zipstream`](@ref) function.
 """
 mutable struct ZipArchiveInputStream{S<:IO}
     source::S
@@ -84,7 +94,50 @@ mutable struct ZipArchiveInputStream{S<:IO}
     directory::Vector{ZipFileInformation}
 end
 
-function zipstream(io::IO; validate_files::Bool=true, validate_directory::Bool=false)
+"""
+    zipstream(io; <keyword arguments>)
+    zipstream(f, io; <keyword arguments>)
+
+Create a read-only lazy streamable representation of a Zip archive.
+
+The first form returns a `ZipArchiveInputStream` wrapped around `io` that allows
+the user to extract files as they are read from the stream by iterating over the
+returned object. `io` can be an object that inherits from `Base.IO` (technically
+only requiring `read`, `eof`, and `skip` to be defined) or an `AbstractString`
+file name, which will open the file in read-only mode and wrap that `IOStream`.
+
+The second form takes a unary function as the first argument. The constructed
+`ZipArchiveInputStream` object will be passed to the function and the results of
+the function will be returned to the user. This allows compatability with `do`
+blocks.
+
+# Keyword arguments
+- `validate_files::Bool=true`: If `true`, validate the data in each of the
+returned file objects after they go out of scope. See
+[`validate(::ZipFileInputStream)`](@ref) for more information.
+- `validate_directory::Bool=true`: If `true`, record information about each file
+while iterating and validate the information with the Central Directory when the
+`ZipArchiveInputStream` object goes out of scope. If this is `false`, no
+information is recorded while streaming, improving performance at the expense of
+making after-the-fact integrity checking impossible. Required to be `true` for
+manual calls to [`validate(::ZipArchiveInputStream)`](@ref)
+
+!!! warning "Reading before knowing where files end can be dangerous!"
+
+    The Central Directory in the Zip archive is the _authoritative source_ for
+    file locations, compressed and uncompressed sizes, and CRC-32 checksums. A
+    Local File Header can lie about this information, leading to improper file
+    extraction.  The `zipstream` method has a keyword argument
+    `validate_directory` which allows the user to validate the discovered files
+    against the Central Directory records when the stream is closed. It is
+    **highly** recommended that users validate the file contents against the
+    Central Directory before even beginning to trust the extracted files.
+
+# Examples
+```jldoctest
+```
+"""
+function zipstream(io::IO; validate_files::Bool=true, validate_directory::Bool=true)
     zs = ZipArchiveInputStream(io, validate_files, validate_directory, ZipFileInformation[])
     if validate_directory
         finalizer(validate, zs)
@@ -94,24 +147,33 @@ end
 zipstream(fname::AbstractString; kwargs...) = zipstream(open(fname, "r"); kwargs...)
 zipstream(f::F, x; kwargs...) where {F<:Function} = zipstream(x; kwargs...) |> f
 
-Base.close(zs::ZipArchiveInputStream) = close(zs.source)
 Base.eof(zs::ZipArchiveInputStream) = eof(zs.source)
 
 """
     validate(zs)
 
-Validate the directory in the ZipArchiveInputStream.
+Validate the files in the archive `zs` against the Central Directory at the end of
+the archive.
 
-Consumes all the remaining data in the source.
+Consumes all the remaining data in the source stream of `zs` and throws an
+exception if the file information read does not match the information in the
+Central Directory.
+
+!!! warning "Requires `validate_directory`"
+
+    Unless the archive is empty, this method is guaranteed to throw if `zs` was
+    not created with `validate_directory` equal to `true`.
 
 Throws an exception if the directory at the end of the `IO` source in the
 `ZipArchiveInputStream` does not match the files detected while reading the
-archive. If directed to by using the `validate_files` keyword argument, will also
-validate the archived files with their own headers as they are read.
+archive. If `zs` has the `validate_files` property set to `true`, this method will
+also validate the archived files with their own headers as they are read.
+
+See also [`validate(::ZipFileInputStream)`](@ref).
 """
-function validate(zs::ZipArchiveInputStream; validate_files::Bool=false)
+function validate(zs::ZipArchiveInputStream)
     for f in zs
-        if validate_files
+        if zs.validate_files
             validate(f)
         end
     end
