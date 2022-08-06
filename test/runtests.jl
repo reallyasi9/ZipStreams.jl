@@ -194,6 +194,15 @@ end
         @test position(stream) == length(fake_data) - 4101
         @test read(stream, length(signature)) == signature
     end
+
+    @testset "Missing" begin
+        signature = UInt8.(collect("QUA"))
+        fake_data = UInt8.(rand('a':'z', 10_000))
+        stream = IOBuffer(fake_data)
+        seekend(stream)
+        ZipFiles.seek_backward_to(stream, signature)
+        @test eof(stream)
+    end
 end
 
 @testset "ZipStream" begin
