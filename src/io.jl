@@ -6,7 +6,14 @@ using StringEncodings
 
 Read and return a value of type T read from `io` in little-endian format.
 """
-readle(io::IO, ::Type{T}) where T = ltoh(read(io, T))
+readle(io::IO, ::Type{T}) where {T} = ltoh(read(io, T))
+
+"""
+    writele(io, ...)
+
+Write a value to `io` in little-endian format.
+"""
+writele(io::IO, value::T) where {T} = write(io, htol(value))
 
 """
     bytearray(i)
@@ -16,14 +23,15 @@ Reinterpret a value `i` as an appropriately sized array of bytes.
 See: https://stackoverflow.com/a/70782597/5075720
 """
 bytearray(a::AbstractArray) = reinterpret(UInt8, a)
-bytearray(i::T) where T = reinterpret(UInt8, [i])
+bytearray(i::T) where {T} = reinterpret(UInt8, [i])
 
 """
     bytesle2int(a, T)
 
 Reinterpret an array of little-endian bytes `a` as an integer of type T.
 """
-bytesle2int(a::AbstractArray{UInt8}, ::Type{T}) where T<:Integer = first(reinterpret(T, ltoh(a)))
+bytesle2int(a::AbstractArray{UInt8}, ::Type{T}) where {T<:Integer} =
+    first(reinterpret(T, ltoh(a)))
 
 """
     readstring(io, [nb; encoding="IBM437"])
@@ -38,14 +46,14 @@ Returns a tuple of the parsed `String` and the number of bytes read.
 The `encoding` parameter will enforce that particular encoding for the data. The
 returned `String` object will always be a proper UTF-8 string.
 """
-function readstring(io::IO, nb::Integer; encoding::Union{String, Encoding}=enc"IBM437")
+function readstring(io::IO, nb::Integer; encoding::Union{String,Encoding} = enc"IBM437")
     arr = Array{UInt8}(undef, nb)
     bytes_read = readbytes!(io, arr, nb)
     s = decode(arr, encoding)
     return (s, bytes_read)
 end
 
-function readstring(io::IO; encoding::Union{String, Encoding}=enc"IBM437")
+function readstring(io::IO; encoding::Union{String,Encoding} = enc"IBM437")
     s = read(io, String, encoding)
     bytes_read = sizeof(s)
     return (s, bytes_read)
@@ -102,10 +110,15 @@ function msdos2datetime(dosdate::UInt16, dostime::UInt16)
     return DateTime(year, month, day, hour, minute, second)
 end
 
-@doc (@doc msdos2datetime)
-function datetime2msdos(datetime::DateTime)
-    dosdate = UInt16(day(datetime) - 1) | (UInt16(month(datetime)) << 5) | ((UInt16(year(datetime) - 1980) & 0x7f) << 9)
-    dostime = UInt16(second(datetime) ÷ 2) | (UInt16(minute(datetime)) << 5) | (UInt16(hour(datetime)) << 11)
+@doc (@doc msdos2datetime) function datetime2msdos(datetime::DateTime)
+    dosdate =
+        UInt16(day(datetime) - 1) |
+        (UInt16(month(datetime)) << 5) |
+        ((UInt16(year(datetime) - 1980) & 0x7f) << 9)
+    dostime =
+        UInt16(second(datetime) ÷ 2) |
+        (UInt16(minute(datetime)) << 5) |
+        (UInt16(hour(datetime)) << 11)
     return dosdate, dostime
 end
 
@@ -139,7 +152,7 @@ function seek_backward_to(io::IO, signature::Union{UInt8,Vector{UInt8}})
         pos = findlast(signature, cache)
         if !isnothing(pos)
             reset(io)
-            skip(io, first(pos)-1)
+            skip(io, first(pos) - 1)
             break
         end
         if last_time

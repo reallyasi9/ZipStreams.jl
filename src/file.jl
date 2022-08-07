@@ -1,4 +1,4 @@
-import Base: read, eof, seek
+import Base: read, eof, seek, write
 
 using CodecZlib
 using Dates
@@ -51,7 +51,10 @@ function Base.read(io::IO, ::Type{ZipFileInformation}, signature::UInt32)
     end
 
     flags = readle(io, UInt16)
-    if (flags & ~(MASK_COMPRESSION_OPTIONS | FLAG_FILE_SIZE_FOLLOWS | FLAG_LANGUAGE_ENCODING)) != 0
+    if (
+        flags &
+        ~(MASK_COMPRESSION_OPTIONS | FLAG_FILE_SIZE_FOLLOWS | FLAG_LANGUAGE_ENCODING)
+    ) != 0
         @warn "Unsupported general purpose flags detected" flags
     end
     utf8 = (flags & FLAG_LANGUAGE_ENCODING) != 0
@@ -80,9 +83,9 @@ function Base.read(io::IO, ::Type{ZipFileInformation}, signature::UInt32)
     comment_length = UInt16(0)
     if central_directory
         comment_length = readle(io, UInt16)
-        
+
         disk = readle(io, UInt16)
-        if disk ∉ (0,1)
+        if disk ∉ (0, 1)
             @warn "Archives spanning multiple disks are not supported" disk
         end
 
@@ -93,7 +96,7 @@ function Base.read(io::IO, ::Type{ZipFileInformation}, signature::UInt32)
     end
 
     encoding = utf8 ? enc"UTF-8" : enc"IBM437"
-    (filename, bytes_read) = readstring(io, filename_length; encoding=encoding)
+    (filename, bytes_read) = readstring(io, filename_length; encoding = encoding)
     if bytes_read != filename_length
         error("EOF when reading file name")
     end
@@ -117,19 +120,25 @@ function Base.read(io::IO, ::Type{ZipFileInformation}, signature::UInt32)
         # MUST have 0xffffffff for sizes in original record per 4.5.3.
         if nfields >= 1
             if uncompressed_size != typemax(UInt32)
-                error("Zip64-encoded does not signal uncompressed size: expected $(typemax(UInt32)), got $(uncompressed_size)")
+                error(
+                    "Zip64-encoded does not signal uncompressed size: expected $(typemax(UInt32)), got $(uncompressed_size)",
+                )
             end
             uncompressed_size = readle(io, UInt64)
         end
         if nfields >= 2
             if compressed_size != typemax(UInt32)
-                error("Zip64-encoded does not signal compressed size: expected $(typemax(UInt32)), got $(compressed_size)")
+                error(
+                    "Zip64-encoded does not signal compressed size: expected $(typemax(UInt32)), got $(compressed_size)",
+                )
             end
             compressed_size = readle(io, UInt64)
         end
         if nfields >= 3
             if offset != typemax(UInt32)
-                error("Zip64-encoded does not signal offset: expected $(typemax(UInt32)), got $(offset)")
+                error(
+                    "Zip64-encoded does not signal offset: expected $(typemax(UInt32)), got $(offset)",
+                )
             end
             offset = readle(io, UInt64)
         end
@@ -147,7 +156,7 @@ function Base.read(io::IO, ::Type{ZipFileInformation}, signature::UInt32)
     end
 
     # comment_length will be zero here if not central directory
-    (comment, bytes_read) = readstring(io, comment_length; encoding=encoding)
+    (comment, bytes_read) = readstring(io, comment_length; encoding = encoding)
     if bytes_read != comment_length
         error("EOF when reading comment")
     end
@@ -183,6 +192,82 @@ end
 function Base.read(io::IO, ::Type{LocalFileHeader})
     info = read(io, ZipFileInformation, SIG_LOCAL_FILE)
     return LocalFileHeader(info)
+end
+
+function Base.write(io::IO, header::LocalFileHeader)
+    nb = 0
+    # signature: 4 bytes
+    nb += writele(io, SIG_LOCAL_FILE)
+    
+    # version required to extract: 2 bytes
+    zip64 = header.info.zip64
+    if !zip64 && (header.info.compressed_size > typemax(UInt32) || header.info.uncompressed_size >= typemax(Uint32))
+        @warn "File size too large for a standard Zip archive: using Zip64 instead" uncompressed_size=header.info.uncompressed_size compressed_size=header.info.compressed_size
+        zip64 = true
+    end
+    if zip64
+        nb += writele(io, ZIP64_MINIMUM_VERSION)
+    else
+        nb += writele(io, DEFLATE_OR_FOLDER_MINIMUM_VERSION)
+    end
+
+    # general purpose flags: 2 bytes
+    flags = UInt16(0)
+    if header.info.descriptor_follows
+        flags |= FLAG_HEADER_MASKED
+    end
+    if header.info.utf8
+        flags |= FLAG_LANGUAGE_ENCODING
+    end
+    nb += writele(io, flags)
+
+    # compression method: 2 bytes
+    nb += writele(io, header.info.compression_method)
+
+    # mod time: 2 bytes
+    # mod date: 2 bytes
+    (moddate, modtime) = datetime2msdos(header.info.last_modified)
+    nb += writele(io, modtime)
+    nb += writele(io, moddate)
+
+    # crc-32: 4 bytes
+    nb += writele(io, header.info.crc32)
+
+    # compressed size: 4 bytes (maybe)
+    # uncompressed size: 4 bytes (maybe)
+    if zip64
+        nb += writele(io, typemax(UInt32))
+        nb += writele(io, typemax(UInt32))
+    else
+        nb += writele(io, header.info.compressed_size % Uint32)
+        nb += writele(io, header.info.uncompressed_size % UInt32)
+    end
+
+    # file name length: 2 bytes
+    encoding = header.info.utf8 ? enc"UTF-8" : enc"IBM437"
+    filename_encoded = encode(header.info.name, encoding)
+    nb += writele(io, length(filename_encoded))
+
+    # extra field length: 2 bytes
+    extra_length = zip64 ? 20 : 0
+    nb += writele(io, extra_length)
+
+    # file name: variable
+    nb += writele(io, filename_encoded)
+
+    # extra field: variable
+    if zip64
+        # header: 2 bytes
+        writele(io, HEADER_ZIP64)
+        # remaining length: 2 bytes
+        writele(io, UInt16(16))
+        # original size: 8 bytes
+        writele(io, header.info.uncompressed_size)
+        # compressed size: 8 bytes
+        writele(io, header.info.compressed_size)
+    end
+
+    return nb
 end
 
 """
@@ -251,7 +336,7 @@ end and read backward, which might be more efficient for large files.
 function seek_to_directory(io::IO)
     try
         _seek_to_directory_backward(io)
-    catch 
+    catch
         _seek_to_directory_forward(io)
     end
 end
@@ -294,7 +379,9 @@ function _seek_to_directory_backward(io::IO)
     skip(io, -20) # beginning of zip64 EoCD locator
     sig = readle(io, UInt32)
     if sig != SIG_ZIP64_CENTRAL_DIRECTORY_LOCATOR
-        error("Zip64 end of central directory locator required: expected signature $(SIG_ZIP64_CENTRAL_DIRECTORY_LOCATOR) at position $(position(io)-sizeof(SIG_ZIP64_CENTRAL_DIRECTORY_LOCATOR)), got $(sig)")
+        error(
+            "Zip64 end of central directory locator required: expected signature $(SIG_ZIP64_CENTRAL_DIRECTORY_LOCATOR) at position $(position(io)-sizeof(SIG_ZIP64_CENTRAL_DIRECTORY_LOCATOR)), got $(sig)",
+        )
     end
     skip(io, 4) # skip disk number
     offset = readle(io, UInt64) # beginning of zip64 EoCD
@@ -302,7 +389,9 @@ function _seek_to_directory_backward(io::IO)
     seek(io, offset)
     sig = readle(io, UInt32)
     if sig != SIG_ZIP64_END_OF_CENTRAL_DIRECTORY
-        error("Zip64 end of central directory required: expected signature $(SIG_ZIP64_END_OF_CENTRAL_DIRECTORY) at position $(position(io)-sizeof(SIG_ZIP64_END_OF_CENTRAL_DIRECTORY)), got $(sig)")
+        error(
+            "Zip64 end of central directory required: expected signature $(SIG_ZIP64_END_OF_CENTRAL_DIRECTORY) at position $(position(io)-sizeof(SIG_ZIP64_END_OF_CENTRAL_DIRECTORY)), got $(sig)",
+        )
     end
     skip(io, 42) # skip to offset
     start_of_cd = readle(io, UInt64)
