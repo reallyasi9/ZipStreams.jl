@@ -1,4 +1,4 @@
-import Base: open, close
+import Base: open, close, mkdir, mkpath
 
 using Dates
 using TranscodingStreams
@@ -22,19 +22,16 @@ mutable struct ZipArchiveOutputStream{S<:IO}
     directory::Vector{CentralDirectoryHeader}
 
     utf8::Bool
-    use_signatures::Bool
     comment::String
+
+    _folders_created::Set{String}
 end
 
-mutable struct ZipFileOutputStream{S<:IO} <: IO
-    sink::S
-    write_signature::Bool
+mutable struct ZipFileOutputStream{S1<:IO, S2<:IO} <: IO
+    sink::S1
 
     #! NOT THREAD SAFE!
-    parent_archive::ZipArchiveOutputStream
-    header_crc_pos::Int
-    header_compressed_size_pos::Int
-    header_uncompressed_size_pos::Int
+    raw_sink::S2
 
     # don't close twice
     _closed::Bool
@@ -57,11 +54,10 @@ function Base.open(
     fname::AbstractString;
     compression::UInt16 = COMPRESSION_DEFLATE,
     utf8::Bool = true,
-    use_signature::Bool = false,
     comment::AbstractString = "",
 )
     # 1. write local header to parent
-    offset = position(archive.sink)
+    raw_sink = archive.sink
     info = ZipFileInformation(
         compression,
         0,
@@ -76,16 +72,9 @@ function Base.open(
         true,
     )
     local_file_header = LocalFileHeader(info)
-    nb = write(archive.sink, local_file_header)
+    write(raw_sink, local_file_header)
 
-    # 2. record parent position of signature
-    # TODO: deal with non-Zip64 files?
-    # Always in the same place for Zip64 files written how we write them.
-    header_crc_pos = offset + 14
-    header_uncompressed_size_pos = offset + nb - 16
-    header_compressed_size_pos = header_uncompressed_size_pos + 8
-
-    # 3. set up compression stream
+    # 2. set up compression stream
     if compression == COMPRESSION_DEFLATE
         codec = DeflateCompressor()
     elseif compression == COMPRESSION_STORE
@@ -93,24 +82,20 @@ function Base.open(
     else
         error("undefined compression type $compression")
     end
-    transcoder = TranscodingStream(codec, archive.sink)
+    transcoder = TranscodingStream(codec, raw_sink)
     filesink = CRC32OutputStream(transcoder)
 
-    # 4. create file object
+    # 3. create file object
     zipfile = ZipFileOutputStream(
         filesink,
-        use_signature,
-        archive,
-        header_crc_pos,
-        header_compressed_size_pos,
-        header_uncompressed_size_pos,
+        raw_sink,
         false,
     )
 
-    # 5. set up finalizer
+    # 4. set up finalizer
     finalizer(close, zipfile)
 
-    # 6. return file object
+    # 5. return file object
     return zipfile
 end
 
@@ -124,27 +109,64 @@ function Base.close(zipfile::ZipFileOutputStream)
     compressed_size = zipfile.sink.bytes_written
     uncompressed_size = TranscodingStreams.stats(zipfile.sink.sink).transcoded_in
 
-    if zipfile.write_signature
-        # FIXME: Not atomic!
-        writele(zipfile.parent_archive.sink, crc32)
-        writele(zipfile.parent_archive.sink, compressed_size)
-        writele(zipfile.parent_archive.sink, uncompressed_size)
-    else
-        # FIXME: Not atomic!
-        mark(zipfile.parent_archive.sink)
-        seek(zipfile.parent_archive.sink, zipfile.header_crc_pos)
-        writele(zipfile.parent_archive.sink, crc32)
-        seek(zipfile.parent_archive.sink, zipfile.header_uncompressed_size_pos)
-        writele(zipfile.parent_archive.sink, uncompressed_size)
-        seek(zipfile.parent_archive.sink, zipfile.header_compressed_size_pos)
-        writele(zipfile.parent_archive.sink, compressed_size)
-        reset(zipfile.parent_archive.sink)
-    end
+    # FIXME: Not atomic!
+    writele(zipfile.raw_sink, crc32)
+    writele(zipfile.raw_sink, compressed_size)
+    writele(zipfile.raw_sink, uncompressed_size)
+
     zipfile._closed = true
     return
 end
 
 Base.write(zipfile::ZipFileOutputStream, value::UInt8) = write(zipfile.sink, value)
+
+function Base.mkdir(ziparchive::ZipArchiveOutputStream, path::AbstractString; comment::AbstractString="")
+    paths = split(path, ZIP_PATH_DELIMITER; keepempty=false)
+    if isempty(paths)
+        return path
+    end
+    for i in 1:length(paths)-1
+        p = join(paths[1:i], "/")
+        if p ∉ ziparchive._folders_created
+            error("cannot create directory '$path': path '$p' does not exist")
+        end
+    end
+    path = join(paths, "/")
+    offset = position(ziparchive.sink)
+    info = ZipFileInformation(
+        COMPRESSION_STORE,
+        0,
+        0,
+        now(),
+        0,
+        offset,
+        path,
+        comment,
+        false,
+        ziparchive.utf8,
+        false,
+    )
+    local_file_header = LocalFileHeader(info)
+    write(ziparchive.sink, local_file_header)
+    central_directory_header = CentralDirectoryHeader(info)
+    push!(ziparchive.directory, central_directory_header)
+    push!(ziparchive._folders_created, path)
+    return path
+end
+
+function Base.mkpath(ziparchive::ZipArchiveOutputStream, path::AbstractString; comment::AbstractString="")
+    paths = split(path, ZIP_PATH_DELIMITER; keepempty=false)
+    if isempty(paths)
+        return path
+    end
+    for i in 1:length(paths)-1
+        p = join(paths[1:i], "/")
+        if p ∉ ziparchive._folders_created
+            mkdir(ziparchive, p)
+        end
+    end
+    return mkdir(ziparchive, path)
+end
 
 """
     zipsink(fname, [mode=:append]; [keyword arguments]) -> ZipArchiveOutputStream
@@ -170,13 +192,6 @@ return value of `f` will be returned to the user.
 # Keyword arguments
 - `utf8::Bool=true`: Encode file names and comments with UTF-8 encoding. If
 `false`, follows the Zip standard of treating text as encoded in IBM437 encoding.
-- `use_signatures::Bool=false`: Use signatures after the file data to record
-written file size, original file size, and CRC-32 checksum data. If `true`, the
-data will be written to stream in a truly write-only fashion; if `false`, the
-sink stream must be seekable to allow overwriting previously-written Local File
-Header data with the proper information. Setting `use_signatures` to `true` speeds
-up writing data, but it may make the resulting archive incompatable with stream
-reading.
 - `comment::AbstractString=""`: A comment to store with the Zip archive. This
 information is stored in plain text at the end of the archive and does not affect
 the Zip archive in any other way.
@@ -192,7 +207,6 @@ the Zip archive in any other way.
 function zipsink(
     io::IO;
     utf8::Bool = true,
-    use_signatures::Bool = false,
     comment::AbstractString = "",
 )
     # assume the user knows their stuff
@@ -200,7 +214,6 @@ function zipsink(
         io,
         CentralDirectoryHeader[],
         utf8,
-        use_signatures,
         comment,
     )
 end
@@ -209,7 +222,6 @@ function zipsink(
     fname::AbstractString,
     mode::AbstractString="w";
     utf8::Bool = true,
-    use_signatures::Bool = false,
     comment::AbstractString = "",
 )
     if mode ∉ ("w", "a")
@@ -234,7 +246,7 @@ function zipsink(
         reset(sink) # move back to the CD so that it can be overwritten
     end
 
-    return ZipArchiveOutputStream(sink, directory, utf8, use_signatures, comment)
+    return ZipArchiveOutputStream(sink, directory, utf8, comment)
 end
 
 zipsink(f::F, args...; kwargs...) where {F<:Function} = zipsink(args...; kwargs...) |> f
