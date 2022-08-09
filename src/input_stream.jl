@@ -3,31 +3,29 @@ import Base: HasEltype, IteratorEltype, IteratorSize, SizeUnknown, close, eltype
 """
     ZipFileInputStream
 
-A wrapper around an IO stream that includes information about an archived file. 
+A wrapper around an `IO`` stream that includes information about an archived file. 
 
-Use the [`filestream`](@ref) method to properly construct a `ZipFileInputStream`
-from an arbitrary IO object.
+A `ZipFileInputStream` implements `read(zf, UInt8)`, allowing all other basic read
+opperations to treat the object as if it were a file. Information about the
+archived file is stored in the `info` property.
 """
 mutable struct ZipFileInputStream{S<:IO} <: IO
     info::ZipFileInformation
     source::S
 end
 
-function filestream(info::ZipFileInformation, io::IO; validate_on_close::Bool=true)
+function zipfile(info::ZipFileInformation, io::IO; calculate_crc32::Bool=true)
     truncstream = TruncatedInputStream(io, info.compressed_size)
     C = info.compression_method == COMPRESSION_DEFLATE ? CodecZlib.DeflateDecompressor : TranscodingStreams.Noop
-    transstream = TranscodingStream(C(), truncstream)
-    crc32stream = CRC32InputStream(transstream)
-
-    zf = ZipFileInputStream(info, crc32stream)
-    if validate_on_close
-        finalizer(validate, zf)
+    stream = TranscodingStream(C(), truncstream)
+    if calculate_crc32
+        stream = CRC32InputStream(stream)
     end
-    return zf
+    return ZipFileInputStream(info, stream)
 end
 
-function filestream(f::F, info::ZipFileInformation, io::IO; validate_on_close::Bool=true) where {F <: Function}
-    zipfile(info, io; validate_on_close=validate_on_close) |> f
+function zipfile(f::F, info::ZipFileInformation, io::IO; calculate_crc32::Bool=true) where {F <: Function}
+    zipfile(info, io; calculate_crc32=calculate_crc32) |> f
 end
 
 """
@@ -39,18 +37,34 @@ in the header.
 When called, this method will read through the remainder of the archived file
 until EOF is reached.
 """
-function validate(zf::ZipFileInputStream)
+function validate(zf::ZipFileInputStream{S}) where {S <: CRC32InputStream}
     # read the remainder of the file
-    read(zf.source)
+    read(zf)
     if zf.source.crc32 != zf.info.crc32
         error("CRC32 check failed: expected $(zf.info.crc32), got $(zf.source.crc32)")
     end
-    if zf.source.bytes_read != zf.info.compressed_size
-        error("bytes read check failed: expected $(zf.info.compressed_size), got $(zf.source.bytes_read)")
+    stats = TranscodingStreams.stats(zf.source.source)
+    if stats.transcoded_in != zf.info.compressed_size
+        error("compressed size check failed: expected $(zf.info.compressed_size), got $(stats.transcoded_in)")
+    end
+    if stats.transcoded_out != zf.info.uncompressed_size
+        error("uncompressed size check failed: expected $(zf.info.uncompressed_size), got $(stats.transcoded_out)")
     end
 end
 
-Base.read(zf::ZipFileInputStream) = read(zf.source)
+function validate(zf::ZipFileInputStream)
+    # read the remainder of the file
+    read(zf)
+    stats = TranscodingStreams.stats(zf.source)
+    if stats.transcoded_in != zf.info.compressed_size
+        error("compressed size check failed: expected $(zf.info.compressed_size), got $(stats.transcoded_in)")
+    end
+    if stats.transcoded_out != zf.info.uncompressed_size
+        error("uncompressed size check failed: expected $(zf.info.uncompressed_size), got $(stats.transcoded_out)")
+    end
+end
+
+Base.read(zf::ZipFileInputStream, ::Type{UInt8}) = read(zf.source, UInt8)
 Base.eof(zf::ZipFileInputStream) = eof(zf.source)
 
 """
@@ -88,9 +102,8 @@ Create `ZipArchiveInputStream` objects using the [`zipstream`](@ref) function.
 mutable struct ZipArchiveInputStream{S<:IO}
     source::S
 
-    validate_files::Bool
-    validate_directory::Bool
-
+    store_file_info::Bool
+    calculate_crc32s::Bool
     directory::Vector{ZipFileInformation}
 end
 
@@ -137,11 +150,8 @@ manual calls to [`validate(::ZipArchiveInputStream)`](@ref)
 ```jldoctest
 ```
 """
-function zipstream(io::IO; validate_files::Bool=true, validate_directory::Bool=true)
-    zs = ZipArchiveInputStream(io, validate_files, validate_directory, ZipFileInformation[])
-    if validate_directory
-        finalizer(validate, zs)
-    end
+function zipstream(io::IO; store_file_info::Bool=false, calculate_crc32s::Bool=false)
+    zs = ZipArchiveInputStream(io, store_file_info, calculate_crc32s, ZipFileInformation[])
     return zs
 end
 zipstream(fname::AbstractString; kwargs...) = zipstream(open(fname, "r"); kwargs...)
@@ -172,12 +182,15 @@ also validate the archived files with their own headers as they are read.
 See also [`validate(::ZipFileInputStream)`](@ref).
 """
 function validate(zs::ZipArchiveInputStream)
+    # validate remaining files
     for f in zs
-        if zs.validate_files
-            validate(f)
-        end
+        validate(f)
     end
     # Guaranteed to be at the end.
+    if !zs.store_file_info
+        @warn "Unable to validate files against Central Directory because `store_file_info` argument set to `false`"
+        return
+    end
     # Seek backward to and read the directory.
     _seek_to_directory_backward(zs.source)
     # Read off the directory contents and check what was found.
@@ -206,8 +219,10 @@ function Base.iterate(zs::ZipArchiveInputStream, state::Int=0)
     skip(zs.source, -sizeof(SIG_LOCAL_FILE))
     header = read(zs.source, LocalFileHeader)
     # add the local file header to the directory
-    push!(zf.directory, header.info)
-    zf = zipfile(header.info, zs.source; validate_on_close=zs.validate_files)
+    if zs.store_file_info
+        push!(zs.directory, header.info)
+    end
+    zf = zipfile(header.info, zs.source; calculate_crc32=zs.calculate_crc32s)
     return (zf, state+1)
 end
 

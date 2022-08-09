@@ -10,7 +10,6 @@ read.
 """
 mutable struct CRC32InputStream{T} <: IO
     source::T
-    bytes_read::UInt64
     crc32::UInt32
 end
 
@@ -24,16 +23,13 @@ Base.eof(s::CRC32InputStream) = eof(s.source)
 Base.isopen(s::CRC32InputStream) = isopen(s.source)
 
 function Base.unsafe_read(s::CRC32InputStream, p::Ptr{UInt8}, nb::UInt)
-    unsafe_read(s.source, p, nb)
-    # NOTE: might overflow
-    s.bytes_read += nb
+    x = unsafe_read(s.source, p, nb)
     s.crc32 = crc32(p, nb, s.crc32)
-    return
+    return x
 end
 
 function Base.read(s::CRC32InputStream, ::Type{UInt8})
     x = read(s.source, UInt8)
-    s.bytes_read += 1
     s.crc32 = crc32([x], s.crc32)
     return x
 end
@@ -46,7 +42,6 @@ written.
 """
 mutable struct CRC32OutputStream{T} <: IO
     sink::T
-    bytes_written::UInt64
     crc32::UInt32
 end
 
@@ -61,14 +56,12 @@ Base.isopen(s::CRC32OutputStream) = isopen(s.sink)
 function Base.unsafe_write(s::CRC32OutputStream, p::Ptr{UInt8}, nb::UInt)
     nw = unsafe_write(s.sink, p, nb)
     # NOTE: might overflow
-    s.bytes_written += nw
     s.crc32 = crc32(p, nw, s.crc32)
     return nw
 end
 
 function Base.write(s::CRC32OutputStream, x::UInt8)
     n = write(s.sink, x)
-    s.bytes_written += 1
     s.crc32 = crc32([x], s.crc32)
     return n
 end
