@@ -27,147 +27,6 @@ mutable struct ZipArchiveOutputStream{S<:IO}
     _folders_created::Set{String}
 end
 
-mutable struct ZipFileOutputStream{S1<:IO, S2<:IO} <: IO
-    sink::S1
-
-    #! NOT THREAD SAFE!
-    raw_sink::S2
-
-    # don't close twice
-    _closed::Bool
-end
-
-"""
-    open(sink, fname; [keyword arguments]) -> IO
-
-Create a file within a Zip archive and return a handle for writing.
-
-!!! warning "Duplicate file names"
-
-    The Zip archive specification does not clearly define what to do if multiple
-    files in the Zip archive share the same name. This method will allow the user
-    to create files with the same name in a single Zip archive, but other software
-    may not behave as expected when reading the archive.
-"""
-function Base.open(
-    archive::ZipArchiveOutputStream,
-    fname::AbstractString;
-    compression::UInt16 = COMPRESSION_DEFLATE,
-    utf8::Bool = true,
-    comment::AbstractString = "",
-)
-    # 1. write local header to parent
-    raw_sink = archive.sink
-    info = ZipFileInformation(
-        compression,
-        0,
-        0,
-        now(),
-        0,
-        offset,
-        fname,
-        comment,
-        use_signature,
-        utf8,
-        true,
-    )
-    local_file_header = LocalFileHeader(info)
-    write(raw_sink, local_file_header)
-
-    # 2. set up compression stream
-    if compression == COMPRESSION_DEFLATE
-        codec = DeflateCompressor()
-    elseif compression == COMPRESSION_STORE
-        codec = Noop()
-    else
-        error("undefined compression type $compression")
-    end
-    transcoder = TranscodingStream(codec, raw_sink)
-    filesink = CRC32OutputStream(transcoder)
-
-    # 3. create file object
-    zipfile = ZipFileOutputStream(
-        filesink,
-        raw_sink,
-        false,
-    )
-
-    # 4. set up finalizer
-    finalizer(close, zipfile)
-
-    # 5. return file object
-    return zipfile
-end
-
-function Base.close(zipfile::ZipFileOutputStream)
-    if zipfile._closed
-        return
-    end
-    flush(zipfile.sink)
-    crc32 = zipfile.sink.crc32
-    # NOTE: always Zip64 format
-    compressed_size = zipfile.sink.bytes_written
-    uncompressed_size = TranscodingStreams.stats(zipfile.sink.sink).transcoded_in
-
-    # FIXME: Not atomic!
-    writele(zipfile.raw_sink, crc32)
-    writele(zipfile.raw_sink, compressed_size)
-    writele(zipfile.raw_sink, uncompressed_size)
-
-    zipfile._closed = true
-    return
-end
-
-Base.write(zipfile::ZipFileOutputStream, value::UInt8) = write(zipfile.sink, value)
-
-function Base.mkdir(ziparchive::ZipArchiveOutputStream, path::AbstractString; comment::AbstractString="")
-    paths = split(path, ZIP_PATH_DELIMITER; keepempty=false)
-    if isempty(paths)
-        return path
-    end
-    for i in 1:length(paths)-1
-        p = join(paths[1:i], "/")
-        if p ∉ ziparchive._folders_created
-            error("cannot create directory '$path': path '$p' does not exist")
-        end
-    end
-    path = join(paths, "/")
-    offset = position(ziparchive.sink)
-    info = ZipFileInformation(
-        COMPRESSION_STORE,
-        0,
-        0,
-        now(),
-        0,
-        offset,
-        path,
-        comment,
-        false,
-        ziparchive.utf8,
-        false,
-    )
-    local_file_header = LocalFileHeader(info)
-    write(ziparchive.sink, local_file_header)
-    central_directory_header = CentralDirectoryHeader(info)
-    push!(ziparchive.directory, central_directory_header)
-    push!(ziparchive._folders_created, path)
-    return path
-end
-
-function Base.mkpath(ziparchive::ZipArchiveOutputStream, path::AbstractString; comment::AbstractString="")
-    paths = split(path, ZIP_PATH_DELIMITER; keepempty=false)
-    if isempty(paths)
-        return path
-    end
-    for i in 1:length(paths)-1
-        p = join(paths[1:i], "/")
-        if p ∉ ziparchive._folders_created
-            mkdir(ziparchive, p)
-        end
-    end
-    return mkdir(ziparchive, path)
-end
-
 """
     zipsink(fname, [mode=:append]; [keyword arguments]) -> ZipArchiveOutputStream
     zipsink(io; [keyword arguments]) -> ZipArchiveOutputStream
@@ -215,6 +74,7 @@ function zipsink(
         CentralDirectoryHeader[],
         utf8,
         comment,
+        Set{String}(),
     )
 end
 
@@ -246,7 +106,208 @@ function zipsink(
         reset(sink) # move back to the CD so that it can be overwritten
     end
 
-    return ZipArchiveOutputStream(sink, directory, utf8, comment)
+    return ZipArchiveOutputStream(sink, directory, utf8, comment, Set{String}())
 end
 
 zipsink(f::F, args...; kwargs...) where {F<:Function} = zipsink(args...; kwargs...) |> f
+
+function Base.close(archive::ZipArchiveOutputStream)
+    # write the Central Directory headers
+    nb = 0
+    startpos = position(archive.sink)
+    zip64 = false
+    for header in archive.directory
+        nb += write(archive.sink, header)
+        zip64 |= header.info.zip64
+    end
+    endpos = position(archive.sink)
+
+    # write the EoCD, using Zip64 standard as necessary
+    n_entries = UInt64(length(archive.directory))
+    zip64 |= (nb >= typemax(UInt32) || startpos >= typemax(UInt32) || endpos >= typemax(UInt32) || n_entries >= typemax(UInt16))
+    if zip64
+        _write_zip64_eocd_record(archive.sink, n_entries, UInt64(nb), UInt64(startpos))
+        _write_zip64_eocd_locator(archive.sink, UInt64(endpos))
+        _write_eocd_record(archive.sink, typemax(UInt16), typemax(UInt32), typemax(UInt32), archive.comment)
+    else
+        _write_eocd_record(archive.sink, n_entries % UInt16, nb % UInt32, startpos % UInt32, archive.comment)
+    end
+
+    close(archive.sink)
+end
+
+function Base.mkdir(ziparchive::ZipArchiveOutputStream, path::AbstractString; comment::AbstractString="")
+    paths = split(path, ZIP_PATH_DELIMITER; keepempty=false)
+    if isempty(paths)
+        return path
+    end
+    for i in 1:length(paths)-1
+        p = join(paths[1:i], "/")
+        if p ∉ ziparchive._folders_created
+            error("cannot create directory '$path': path '$p' does not exist")
+        end
+    end
+    path = join(paths, "/") * "/"
+    offset = position(ziparchive.sink)
+    info = ZipFileInformation(
+        COMPRESSION_STORE,
+        0,
+        0,
+        now(),
+        0,
+        offset,
+        path,
+        comment,
+        false,
+        ziparchive.utf8,
+        false,
+    )
+    local_file_header = LocalFileHeader(info)
+    write(ziparchive.sink, local_file_header)
+    central_directory_header = CentralDirectoryHeader(info)
+    push!(ziparchive.directory, central_directory_header)
+    push!(ziparchive._folders_created, path)
+    return path
+end
+
+function Base.mkpath(ziparchive::ZipArchiveOutputStream, path::AbstractString; comment::AbstractString="")
+    paths = split(path, ZIP_PATH_DELIMITER; keepempty=false)
+    if isempty(paths)
+        return path
+    end
+    for i in 1:length(paths)-1
+        p = join(paths[1:i], "/")
+        if p ∉ ziparchive._folders_created
+            mkdir(ziparchive, p)
+        end
+    end
+    return mkdir(ziparchive, path)
+end
+
+mutable struct ZipFileOutputStream{S1<:IO, S2<:IO} <: IO
+    sink::S1
+    info::ZipFileInformation
+
+    #! NOT THREAD SAFE!
+    parent::ZipArchiveOutputStream{S2}
+
+    # don't close twice
+    _closed::Bool
+end
+
+"""
+    open(sink, fname; [keyword arguments]) -> IO
+
+Create a file within a Zip archive and return a handle for writing.
+
+!!! warning "Duplicate file names"
+
+    The Zip archive specification does not clearly define what to do if multiple
+    files in the Zip archive share the same name. This method will allow the user
+    to create files with the same name in a single Zip archive, but other software
+    may not behave as expected when reading the archive.
+"""
+function Base.open(
+    archive::ZipArchiveOutputStream,
+    fname::AbstractString;
+    compression::UInt16 = COMPRESSION_DEFLATE,
+    utf8::Bool = true,
+    comment::AbstractString = "",
+)
+    # 0. check for directories and deal with them accordingly
+    if endswith(fname, "/")
+        error("file names cannot end in '/'")
+    end
+    path = split(fname, "/", keepempty=false) # can't trust dirname on Windows
+    if length(path) > 1
+        mkpath(archive, join(path[1:end-1], "/"))
+    end
+
+    # 1. write local header to parent
+    raw_sink = archive.sink
+    offset = position(raw_sink)
+    info = ZipFileInformation(
+        compression,
+        0,
+        0,
+        now(),
+        0,
+        offset,
+        fname,
+        comment,
+        true,
+        utf8,
+        true,
+    )
+    local_file_header = LocalFileHeader(info)
+    write(raw_sink, local_file_header)
+
+    # 2. set up compression stream
+    if compression == COMPRESSION_DEFLATE
+        codec = DeflateCompressor()
+    elseif compression == COMPRESSION_STORE
+        codec = Noop()
+    else
+        error("undefined compression type $compression")
+    end
+    transcoder = TranscodingStream(codec, raw_sink)
+    filesink = CRC32OutputStream(transcoder)
+
+    # 3. create file object
+    zipfile = ZipFileOutputStream(
+        filesink,
+        info,
+        archive,
+        false,
+    )
+
+    # 4. set up finalizer
+    finalizer(close, zipfile)
+
+    # 5. return file object
+    return zipfile
+end
+
+function Base.close(zipfile::ZipFileOutputStream)
+    if zipfile._closed
+        return
+    end
+    flush(zipfile.sink)
+    crc32 = zipfile.sink.crc32
+    # NOTE: always Zip64 format
+    compressed_size = zipfile.sink.bytes_written
+    uncompressed_size = UInt64(TranscodingStreams.stats(zipfile.sink.sink).transcoded_in)
+
+    # FIXME: Not atomic!
+    writele(zipfile.parent.sink, crc32)
+    writele(zipfile.parent.sink, compressed_size)
+    writele(zipfile.parent.sink, uncompressed_size)
+
+    directory_info = ZipFileInformation(
+        zipfile.info.compression_method,
+        uncompressed_size,
+        compressed_size,
+        now(),
+        crc32,
+        zipfile.info.offset,
+        zipfile.info.name,
+        zipfile.info.comment,
+        true,
+        zipfile.info.utf8,
+        zipfile.info.zip64,
+    )
+    push!(zipfile.parent.directory, CentralDirectoryHeader(directory_info))
+
+    zipfile._closed = true
+    return
+end
+
+function Base.write(zipfile::ZipFileOutputStream, value::UInt8)
+    if zipfile._closed
+        error("attempted write to closed file")
+    end
+    return write(zipfile.sink, value)
+end
+
+
+
