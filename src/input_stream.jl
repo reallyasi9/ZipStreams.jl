@@ -1,4 +1,5 @@
 import Base: HasEltype, IteratorEltype, IteratorSize, SizeUnknown, close, eltype, eof, iterate, read
+using Logging
 
 """
     ZipFileInputStream
@@ -152,12 +153,14 @@ manual calls to [`validate(::ZipArchiveInputStream)`](@ref)
 """
 function zipstream(io::IO; store_file_info::Bool=false, calculate_crc32s::Bool=false)
     zs = ZipArchiveInputStream(io, store_file_info, calculate_crc32s, ZipFileInformation[])
+    finalizer(close, zs)
     return zs
 end
 zipstream(fname::AbstractString; kwargs...) = zipstream(open(fname, "r"); kwargs...)
 zipstream(f::F, x; kwargs...) where {F<:Function} = zipstream(x; kwargs...) |> f
 
 Base.eof(zs::ZipArchiveInputStream) = eof(zs.source)
+Base.close(zs::ZipArchiveInputStream) = close(zs.source)
 
 """
     validate(zs)
@@ -188,18 +191,20 @@ function validate(zs::ZipArchiveInputStream)
     end
     # Guaranteed to be at the end.
     if !zs.store_file_info
-        @warn "Unable to validate files against Central Directory because `store_file_info` argument set to `false`"
+        @error "Unable to validate files against Central Directory because `store_file_info` argument set to `false`"
         return
     end
+    @logmsg Logging.Debug+1 "Central directory for validation" zs.directory
     # Seek backward to and read the directory.
     _seek_to_directory_backward(zs.source)
     # Read off the directory contents and check what was found.
     ncd = 0
     for (i, lf_info) in enumerate(zs.directory)
+        @logmsg Logging.Debug+1 "Reading central directory element $i"
         ncd += 1
         cd_info = read(zs.source, CentralDirectoryHeader)
         if cd_info.info != lf_info.info
-            @error "Central Directory header entry $i does not match Local File header" local_file_header=lf_info.info central_directory_header=cd_info.info
+            @logmsg Logging.Debug+1 "central directory entry does not match local file header" i cd_info.info lf_info.info
             error("discrepancy detected in central directory entry $i")
         end
     end
@@ -216,10 +221,12 @@ function Base.iterate(zs::ZipArchiveInputStream, state::Int=0)
         return nothing
     end
     #! FIXME: this will fail if the source is not seekable
+    #! TODO: make sure the source is wrapped in a buffered stream to guarantee
     skip(zs.source, -sizeof(SIG_LOCAL_FILE))
     header = read(zs.source, LocalFileHeader)
     # add the local file header to the directory
     if zs.store_file_info
+        @logmsg Logging.Debug+1 "Adding header to central directory" header.info
         push!(zs.directory, header.info)
     end
     zf = zipfile(header.info, zs.source; calculate_crc32=zs.calculate_crc32s)

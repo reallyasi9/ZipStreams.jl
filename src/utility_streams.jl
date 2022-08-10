@@ -14,7 +14,7 @@ mutable struct CRC32InputStream{T} <: IO
 end
 
 function CRC32InputStream(source::T) where {T}
-    return CRC32InputStream{T}(source, 0, CRC32_INIT)
+    return CRC32InputStream{T}(source, CRC32_INIT)
 end
 
 Base.bytesavailable(s::CRC32InputStream) = bytesavailable(s.source)

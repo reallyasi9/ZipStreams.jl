@@ -1,6 +1,7 @@
 using BenchmarkTools
 using Random
 using ZipFiles
+using ZipFile # for comparison
 
 const SUITE = BenchmarkGroup()
 
@@ -22,7 +23,7 @@ SUITE["seek_backward_to"]["random"] = @benchmarkable ZipFiles.seek_backward_to(x
 
 const VOWEL_BYTES = UInt8.(('a', 'e', 'i', 'o', 'u', 'A', 'E', 'I', 'O', 'U'),)
 const CANTERBURY_LARGE = joinpath(@__DIR__, "..", "test", "canterbury-large.zip")
-function vowel_count_stream(zs::ZipFiles.ZipArchiveInputStream)
+function vowel_count(zs::ZipFiles.ZipArchiveInputStream)
     n = 0
     for f in zs
         while !eof(f)
@@ -33,5 +34,21 @@ function vowel_count_stream(zs::ZipFiles.ZipArchiveInputStream)
     end
     n
 end
+function vowel_count(zr::ZipFile.Reader)
+    n = 0
+    for f in zr.files
+        while !eof(f)
+            if read(f, UInt8) ∈ VOWEL_BYTES
+                n += 1
+            end
+        end
+    end
+    n
+end
 SUITE["canterbury-large"] = BenchmarkGroup()
-SUITE["canterbury-large"]["vowel_count"] = @benchmarkable vowel_count_stream(zs) setup=(zs = $ZipFiles.zipstream(CANTERBURY_LARGE))
+SUITE["canterbury-large"]["constructor"] = @benchmarkable begin zs = ZipFiles.zipstream($CANTERBURY_LARGE); close(zs) end
+SUITE["canterbury-large"]["constructor-validatable"] = @benchmarkable begin zs = ZipFiles.zipstream($CANTERBURY_LARGE; store_file_info=true, calculate_crc32s=true); close(zs) end
+SUITE["canterbury-large"]["validate-directory"] = @benchmarkable begin ZipFiles.validate(zs); close(zs) end setup=(zs = $(ZipFiles.zipstream(CANTERBURY_LARGE; store_file_info=true, calculate_crc32s=true)))
+SUITE["canterbury-large"]["vowel_count"] = BenchmarkGroup()
+SUITE["canterbury-large"]["vowel_count"]["stream"] = @benchmarkable vowel_count(zs) setup=(zs = $ZipFiles.zipstream(CANTERBURY_LARGE))
+SUITE["canterbury-large"]["vowel_count"]["zipfile"] = @benchmarkable vowel_count(zr) setup=(zr = $ZipFile.Reader(CANTERBURY_LARGE))

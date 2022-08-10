@@ -136,7 +136,7 @@ signature in the stream.
 
 Seeks to `seekend(io)` if the signature is not found.
 """
-function seek_backward_to(io::IO, signature::Union{UInt8,Vector{UInt8}})
+function seek_backward_to(io::IO, signature::Union{UInt8,AbstractVector{UInt8}})
     # TODO: This number was pulled out of a hat. Should probably be tuned.
     nbytes = 4096
     # Initialize to zeros to avoid accidental matches in dirty memory.
@@ -147,7 +147,8 @@ function seek_backward_to(io::IO, signature::Union{UInt8,Vector{UInt8}})
     jump_distance = nbytes - sizeof(signature) + 1
     while true
         mark(io)
-        last_time = position(io) == 0
+        here = position(io)
+        last_time = here == 0
         read!(io, cache)
         pos = findlast(signature, cache)
         if !isnothing(pos)
@@ -161,7 +162,8 @@ function seek_backward_to(io::IO, signature::Union{UInt8,Vector{UInt8}})
             break
         end
         reset(io)
-        skip(io, -jump_distance)
+        # skipping to beyond the beginning of the IO causes problems!
+        skip(io, -min(jump_distance, here))
     end
     return
 end

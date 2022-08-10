@@ -41,7 +41,7 @@ function Base.read(io::IO, ::Type{ZipFileInformation}, signature::UInt32)
 
     sig = readle(io, UInt32)
     if sig != signature
-        error("unexpected signature $(sig), expected $(signature)")
+        error("unexpected signature $(string(sig, base=16)), expected $(string(signature, base=16))")
     end
     central_directory = sig == SIG_CENTRAL_DIRECTORY
 
@@ -514,17 +514,25 @@ function _seek_to_directory_backward(io::IO)
     # with no comment, the EoCD record will be the last 22 bytes. Try that first.
     seekend(io)
     skip(io, -22)
+    if readle(io, UInt32) == SIG_END_OF_CENTRAL_DIRECTORY
+        # skip back 4 and call it a day!
+        skip(io, -4)
+        return
+    end
+
+    # All Zip archives are written in LE format.
+    sig = reinterpret(UInt8, [htol(SIG_END_OF_CENTRAL_DIRECTORY)])
     try
-        # All Zip archives are written in LE format.
-        sig = reinterpret(UIt8, [htol(SIG_END_OF_CENTRAL_DIRECTORY)])
         seek_backward_to(io, sig)
-    catch
+    catch e
         # No record: seek to the end and return
+        @error "Error seeking backward to central directory" exception=(last(current_exceptions()).exception,last(current_exceptions()).backtrace)
         seekend(io)
         return
     end
     if eof(io)
         # No record: we're done
+        @error "No central directory record found"
         return
     end
 
