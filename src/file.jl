@@ -517,23 +517,22 @@ function _seek_to_directory_backward(io::IO)
     if readle(io, UInt32) == SIG_END_OF_CENTRAL_DIRECTORY
         # skip back 4 and call it a day!
         skip(io, -4)
-        return
-    end
-
-    # All Zip archives are written in LE format.
-    sig = reinterpret(UInt8, [htol(SIG_END_OF_CENTRAL_DIRECTORY)])
-    try
-        seek_backward_to(io, sig)
-    catch e
-        # No record: seek to the end and return
-        @error "Error seeking backward to central directory" exception=(last(current_exceptions()).exception,last(current_exceptions()).backtrace)
-        seekend(io)
-        return
-    end
-    if eof(io)
-        # No record: we're done
-        @error "No central directory record found"
-        return
+    else
+        # All Zip archives are written in LE format.
+        sig = reinterpret(UInt8, [htol(SIG_END_OF_CENTRAL_DIRECTORY)])
+        try
+            seek_backward_to(io, sig)
+        catch e
+            # No record: seek to the end and return
+            @error "Error seeking backward to end of central directory" exception=(last(current_exceptions()).exception,last(current_exceptions()).backtrace)
+            seekend(io)
+            return
+        end
+        if eof(io)
+            # No record: we're done
+            @error "No end of central directory record found"
+            return
+        end
     end
 
     mark(io)
