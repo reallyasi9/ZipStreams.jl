@@ -265,10 +265,7 @@ function Base.iterate(zs::ZipArchiveInputStream, state::Int=0)
     if eof(zs.source)
         return nothing
     end
-    #! FIXME: this will fail if the source is not seekable
-    #! TODO: make sure the source is wrapped in a buffered stream to guarantee
-    skip(zs.source, -sizeof(SIG_LOCAL_FILE))
-    header = read(zs.source, LocalFileHeader)
+    header = read(zs.source, LocalFileHeader; skip_signature=true)
     # add the local file header to the directory
     if zs.store_file_info
         @logmsg Logging.Debug+1 "Adding header to central directory" header.info

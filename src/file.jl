@@ -101,16 +101,18 @@ function Base.show(io::IO, info::ZipFileInformation)
     print(io, info.name)
 end
 
-function Base.read(io::IO, ::Type{ZipFileInformation}, signature::UInt32)
+function Base.read(io::IO, ::Type{ZipFileInformation}, signature::UInt32; skip_signature::Bool=false)
     offset = UInt64(position(io)) # NOTE: if central_directory, will be replaced later
 
-    sig = readle(io, UInt32)
-    if sig != signature
-        error(
-            "unexpected signature $(string(sig, base=16)), expected $(string(signature, base=16))",
-        )
+    if !skip_signature
+        sig = readle(io, UInt32)
+        if sig != signature
+            error(
+                "unexpected signature $(string(sig, base=16)), expected $(string(signature, base=16))",
+            )
+        end
     end
-    central_directory = sig == SIG_CENTRAL_DIRECTORY
+    central_directory = signature == SIG_CENTRAL_DIRECTORY
 
     # we don't use this information
     if central_directory
@@ -262,8 +264,8 @@ struct LocalFileHeader
     info::ZipFileInformation
 end
 
-function Base.read(io::IO, ::Type{LocalFileHeader})
-    info = read(io, ZipFileInformation, SIG_LOCAL_FILE)
+function Base.read(io::IO, ::Type{LocalFileHeader}; skip_signature::Bool=false)
+    info = read(io, ZipFileInformation, SIG_LOCAL_FILE; skip_signature=skip_signature)
     return LocalFileHeader(info)
 end
 
@@ -396,8 +398,8 @@ struct CentralDirectoryHeader
     info::ZipFileInformation
 end
 
-function Base.read(io::IO, ::Type{CentralDirectoryHeader})
-    info = read(io, ZipFileInformation, SIG_CENTRAL_DIRECTORY)
+function Base.read(io::IO, ::Type{CentralDirectoryHeader}; skip_signature::Bool=false)
+    info = read(io, ZipFileInformation, SIG_CENTRAL_DIRECTORY; skip_signature=skip_signature)
     return CentralDirectoryHeader(info)
 end
 
@@ -664,9 +666,6 @@ function _seek_to_directory_forward(io::IO)
     # Just remember that this also consumes the bytes of the header, so move back!
     sentinel = reinterpret(UInt8, [htol(SIG_CENTRAL_DIRECTORY)])
     readuntil(io, sentinel)
-    if !eof(io)
-        skip(io, -sizeof(SIG_CENTRAL_DIRECTORY))
-    end
     return
 end
 
