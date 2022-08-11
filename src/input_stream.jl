@@ -195,7 +195,14 @@ manual calls to [`validate(::ZipArchiveInputStream)`](@ref)
 ```
 """
 function zipstream(io::IO; store_file_info::Bool=false, calculate_crc32s::Bool=false)
-    zs = ZipArchiveInputStream(io, store_file_info, calculate_crc32s, ZipFileInformation[])
+    # If storing file information, use a Noop stream to catch the offsets without
+    # having to call position on the stream (which might not have a position!)
+    if store_file_info
+        stream = TranscodingStream(Noop(), io)
+        zs = ZipArchiveInputStream(stream, store_file_info, calculate_crc32s, ZipFileInformation[])
+    else
+        zs = ZipArchiveInputStream(io, store_file_info, calculate_crc32s, ZipFileInformation[])
+    end
     finalizer(close, zs)
     return zs
 end
@@ -204,8 +211,6 @@ zipstream(f::F, x; kwargs...) where {F<:Function} = zipstream(x; kwargs...) |> f
 
 Base.eof(zs::ZipArchiveInputStream) = eof(zs.source)
 Base.close(zs::ZipArchiveInputStream) = close(zs.source)
-
-
 
 """
     validate(zs)
@@ -265,11 +270,14 @@ function Base.iterate(zs::ZipArchiveInputStream, state::Int=0)
     if eof(zs.source)
         return nothing
     end
-    header = read(zs.source, LocalFileHeader; skip_signature=true)
+    
     # add the local file header to the directory
     if zs.store_file_info
+        header = read(zs.source, LocalFileHeader; skip_signature=true, offset=TranscodingStreams.stats(zs.source).transcoded_in)
         @logmsg Logging.Debug+1 "Adding header to central directory" header.info
         push!(zs.directory, header.info)
+    else
+        header = read(zs.source, LocalFileHeader; skip_signature=true)
     end
     zf = zipfile(header.info, zs.source; calculate_crc32=zs.calculate_crc32s)
     return (zf, state+1)

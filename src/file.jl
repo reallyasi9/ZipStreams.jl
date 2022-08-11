@@ -101,9 +101,7 @@ function Base.show(io::IO, info::ZipFileInformation)
     print(io, info.name)
 end
 
-function Base.read(io::IO, ::Type{ZipFileInformation}, signature::UInt32; skip_signature::Bool=false)
-    offset = UInt64(position(io)) # NOTE: if central_directory, will be replaced later
-
+function Base.read(io::IO, ::Type{ZipFileInformation}, signature::UInt32; skip_signature::Bool=false, offset::UInt64=UInt64(0))
     if !skip_signature
         sig = readle(io, UInt32)
         if sig != signature
@@ -264,8 +262,8 @@ struct LocalFileHeader
     info::ZipFileInformation
 end
 
-function Base.read(io::IO, ::Type{LocalFileHeader}; skip_signature::Bool=false)
-    info = read(io, ZipFileInformation, SIG_LOCAL_FILE; skip_signature=skip_signature)
+function Base.read(io::IO, ::Type{LocalFileHeader}; skip_signature::Bool=false, offset::UInt64=UInt64(0))
+    info = read(io, ZipFileInformation, SIG_LOCAL_FILE; skip_signature=skip_signature, offset=offset)
     return LocalFileHeader(info)
 end
 
