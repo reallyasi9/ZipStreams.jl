@@ -45,10 +45,10 @@ const COMPRESSION_INFO_FORMAT = String[
     "re:2",
     "re:3",
     "re:4",
-    "i?:?",
+    "impl",
     "tokn",
-    "def?",
-    "d64?",
+    "defl",
+    "df64",
     "dcli",
     "bzp2",
     "lzma",
@@ -59,35 +59,33 @@ const COMPRESSION_INFO_FORMAT = String[
     "????",
 ]
 function Base.show(io::IO, info::ZipFileInformation)
-    # status bits: drwxahs or drwxrwxrwx
+    # TODO: status bits: drwxahs or drwxrwxrwx
     # all: directory, readable, writable, executable
     # windows: archive, hidden, system
     # unix/mac: group r/w/x, user r/w/x
     if endswith(info.name, "/") && info.uncompressed_size == 0
-        print(io, 'd')
+        print(io, "dir ")
     else
-        print(io, '-')
+        print(io, "file")
     end
-    print(io, 'r')
-    print(io, "???????? ")
-    # version used to store: DD.D
-    print(io, "??.? ")
-    # string stating file system type
-    print(io, "??? ")
+    print(io, " ")
+    # TODO: version used to store: DD.D
+    # TODO: string stating file system type
     # original size: at least 8 digits wide
     @printf(io, "%8d ", info.uncompressed_size)
-    # text (t) or binary (b), encrypted=capitalized
-    print(io, "?")
-    # extra data: none (-), extended local header only (l),
+    # TODO: text (t) or binary (b), encrypted=capitalized
+    # print(io, "?")
+    # TODO: extra data: none (-), extended local header only (l),
     #   extra field only (x), both (X)
-    if info.zip64 && info.descriptor_follows
-        print(io, "X ")
-    elseif info.zip64
-        print(io, "x ")
-    elseif info.descriptor_follows
-        print(io, "l ")
+    if info.zip64
+        print(io, "z64 ")
     else
-        print(io, "- ")
+        print(io, "--- ")
+    end
+    if info.descriptor_follows
+        print(io, "lhx ")
+    else
+        print(io, "--- ")
     end
     # compressed size: at least 8 digits wide
     @printf(io, "%8d ", info.compressed_size)

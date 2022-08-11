@@ -1,5 +1,6 @@
 import Base: HasEltype, IteratorEltype, IteratorSize, SizeUnknown, close, eltype, eof, iterate, read, show
 using Logging
+using Printf
 
 """
     ZipFileInputStream
@@ -106,6 +107,48 @@ mutable struct ZipArchiveInputStream{S<:IO}
     store_file_info::Bool
     calculate_crc32s::Bool
     directory::Vector{ZipFileInformation}
+end
+
+function Base.show(io::IO, za::ZipArchiveInputStream)
+    # show different results depending on whether or not the file info is stored
+    # and whether or not we have reached EOF on the input stream
+    print(io, "Zip stream data read")
+    if !eof(za.source)
+        print(io, " so far")
+    end
+    print(io, ": ", position(za.source), " bytes, ")
+    if !za.store_file_info
+        print(io, "not storing file info, ")
+    else
+        print(io, "number of entries")
+        if !eof(za.source)
+            print(io, " so far")
+        end
+        print(io, ": ", length(za.directory), ", ")
+    end
+    if za.calculate_crc32s
+        print(io, "CRC-32 checksums calculated")
+    else
+        print(io, "CRC-32 checksums not calculated")
+    end
+    if za.store_file_info && length(za.directory) > 0
+        println(io)
+        total_uc = 0
+        total_c = 0
+        for entry in za.directory
+            println(io, entry)
+            total_uc += entry.uncompressed_size
+            total_c += entry.compressed_size
+        end
+        print(io, length(za.directory), " files")
+        if !eof(za.source)
+            print(io, " so far")
+        end
+        if total_uc > 0
+            @printf(io, ", %d bytes uncompressed, %d bytes compressed: %5.1f%%", total_uc, total_c, (total_uc - total_c) * 100 / total_uc)
+        end
+    end
+    return
 end
 
 """
