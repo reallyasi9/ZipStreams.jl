@@ -101,6 +101,18 @@ open("archive.zip") do io
     end
 end
 
+# open an enormous file from a network stream
+using BufferedStreams
+using HTTP
+HTTP.open(:GET, "https://download.cms.gov/nppes/NPPES_Data_Dissemination_August_2022.zip") do http
+    zipstream(BufferedInputStream(http)) do zs
+        for f in zs
+            println(f.info.name)
+            break
+        end
+    end
+end
+
 # convenience method for opening an archive as a zipstream
 zs = zipstream("archive.zip")
 close(zs)
