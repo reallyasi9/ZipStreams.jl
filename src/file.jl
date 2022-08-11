@@ -1,7 +1,8 @@
-import Base: read, eof, seek, write
+import Base: read, eof, seek, read, show, write
 
 using CodecZlib
 using Dates
+using Printf
 using TranscodingStreams
 
 """
@@ -36,12 +37,80 @@ struct ZipFileInformation
     zip64::Bool
 end
 
+# Info-ZIP project, see ftp://ftp.info-zip.org/pub/infozip/license.html
+const COMPRESSION_INFO_FORMAT = String[
+    "stor",
+    "shrk",
+    "re:1",
+    "re:2",
+    "re:3",
+    "re:4",
+    "i?:?",
+    "tokn",
+    "def?",
+    "d64?",
+    "dcli",
+    "bzp2",
+    "lzma",
+    "ters",
+    "lz77",
+    "wavp",
+    "ppmd",
+    "????",
+]
+function Base.show(io::IO, info::ZipFileInformation)
+    # status bits: drwxahs or drwxrwxrwx
+    # all: directory, readable, writable, executable
+    # windows: archive, hidden, system
+    # unix/mac: group r/w/x, user r/w/x
+    if endswith(info.name, "/") && info.uncompressed_size == 0
+        print(io, 'd')
+    else
+        print(io, '-')
+    end
+    print(io, 'r')
+    print(io, "???????? ")
+    # version used to store: DD.D
+    print(io, "??.? ")
+    # string stating file system type
+    print(io, "??? ")
+    # original size: at least 8 digits wide
+    @printf(io, "%8d ", info.uncompressed_size)
+    # text (t) or binary (b), encrypted=capitalized
+    print(io, "?")
+    # extra data: none (-), extended local header only (l),
+    #   extra field only (x), both (X)
+    if info.zip64 && info.descriptor_follows
+        print(io, "X ")
+    elseif info.zip64
+        print(io, "x ")
+    elseif info.descriptor_follows
+        print(io, "l ")
+    else
+        print(io, "- ")
+    end
+    # compressed size: at least 8 digits wide
+    @printf(io, "%8d ", info.compressed_size)
+    # compression type
+    if info.compression_method >= length(COMPRESSION_INFO_FORMAT)
+        print(io, "???? ")
+    else
+        print(io, COMPRESSION_INFO_FORMAT[info.compression_method+1], " ")
+    end
+    # last modified date and time
+    print(io, Dates.format(info.last_modified, dateformat"dd-uuu-yy HH:MM "))
+    # name with directory info
+    print(io, info.name)
+end
+
 function Base.read(io::IO, ::Type{ZipFileInformation}, signature::UInt32)
     offset = UInt64(position(io)) # NOTE: if central_directory, will be replaced later
 
     sig = readle(io, UInt32)
     if sig != signature
-        error("unexpected signature $(string(sig, base=16)), expected $(string(signature, base=16))")
+        error(
+            "unexpected signature $(string(sig, base=16)), expected $(string(signature, base=16))",
+        )
     end
     central_directory = sig == SIG_CENTRAL_DIRECTORY
 
@@ -95,7 +164,7 @@ function Base.read(io::IO, ::Type{ZipFileInformation}, signature::UInt32)
             @warn "Archives spanning multiple disks are not supported" disk
         end
 
-        # ignore attributes--don't know what to do with them just yet
+        # file attribute information: unused
         skip(io, 6)
 
         offset = UInt64(readle(io, UInt32))
@@ -204,11 +273,15 @@ function Base.write(io::IO, header::LocalFileHeader)
     nb = 0
     # signature: 4 bytes
     nb += writele(io, SIG_LOCAL_FILE)
-    
+
     # version required to extract: 2 bytes
     zip64 = header.info.zip64
-    if !zip64 && (header.info.compressed_size > typemax(UInt32) || header.info.uncompressed_size >= typemax(UInt32))
-        @warn "File size too large for a standard Zip archive: using Zip64 instead" uncompressed_size=header.info.uncompressed_size compressed_size=header.info.compressed_size
+    if !zip64 && (
+        header.info.compressed_size > typemax(UInt32) ||
+        header.info.uncompressed_size >= typemax(UInt32)
+    )
+        @warn "File size too large for a standard Zip archive: using Zip64 instead" uncompressed_size =
+            header.info.uncompressed_size compressed_size = header.info.compressed_size
         zip64 = true
     end
     if zip64
@@ -334,14 +407,19 @@ function Base.write(io::IO, header::CentralDirectoryHeader)
     nb = 0
     # signature: 4 bytes
     nb += writele(io, SIG_CENTRAL_DIRECTORY)
-    
+
     # version created by: 2 bytes
     nb += writele(io, ZIP64_MINIMUM_VERSION)
 
     # version required to extract: 2 bytes
     zip64 = header.info.zip64
-    if !zip64 && (header.info.compressed_size > typemax(UInt32) || header.info.uncompressed_size >= typemax(UInt32)) || header.info.offset >= typemax(UInt32)
-        @warn "File size or offset too large for a standard Zip archive: using Zip64 instead" uncompressed_size=header.info.uncompressed_size compressed_size=header.info.compressed_size offset=header.info.offset
+    if !zip64 && (
+        header.info.compressed_size > typemax(UInt32) ||
+        header.info.uncompressed_size >= typemax(UInt32)
+    ) || header.info.offset >= typemax(UInt32)
+        @warn "File size or offset too large for a standard Zip archive: using Zip64 instead" uncompressed_size =
+            header.info.uncompressed_size compressed_size = header.info.compressed_size offset =
+            header.info.offset
         zip64 = true
     end
     if zip64
@@ -465,11 +543,17 @@ function _write_zip64_eocd_locator(io::IO, offset::UInt64)
     nb += writele(io, offset)
     # total number of disks: 4 bytes
     nb += writele(io, UInt32(1)) # might get me in trouble...
-    
+
     return nb
 end
 
-function _write_eocd_record(io::IO, entries::UInt16, nbytes::UInt32, offset::UInt32, comment::AbstractString)
+function _write_eocd_record(
+    io::IO,
+    entries::UInt16,
+    nbytes::UInt32,
+    offset::UInt32,
+    comment::AbstractString,
+)
     nb = writele(io, SIG_END_OF_CENTRAL_DIRECTORY)
     # number of this disk: 2 bytes
     nb += writele(io, UInt16(0))
@@ -530,7 +614,8 @@ function _seek_to_directory_backward(io::IO)
             seek_backward_to(io, sig)
         catch e
             # No record: seek to the end and return
-            @error "Error seeking backward to end of central directory" exception=(last(current_exceptions()).exception,last(current_exceptions()).backtrace)
+            @error "Error seeking backward to end of central directory" exception =
+                (last(current_exceptions()).exception, last(current_exceptions()).backtrace)
             seekend(io)
             return
         end

@@ -1,4 +1,4 @@
-import Base: HasEltype, IteratorEltype, IteratorSize, SizeUnknown, close, eltype, eof, iterate, read
+import Base: HasEltype, IteratorEltype, IteratorSize, SizeUnknown, close, eltype, eof, iterate, read, show
 using Logging
 
 """
@@ -161,6 +161,8 @@ zipstream(f::F, x; kwargs...) where {F<:Function} = zipstream(x; kwargs...) |> f
 
 Base.eof(zs::ZipArchiveInputStream) = eof(zs.source)
 Base.close(zs::ZipArchiveInputStream) = close(zs.source)
+
+
 
 """
     validate(zs)
