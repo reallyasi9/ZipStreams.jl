@@ -203,8 +203,8 @@ function validate(zs::ZipArchiveInputStream)
         @logmsg Logging.Debug+1 "Reading central directory element $i"
         ncd += 1
         cd_info = read(zs.source, CentralDirectoryHeader)
-        if cd_info.info != lf_info.info
-            @logmsg Logging.Debug+1 "central directory entry does not match local file header" i cd_info.info lf_info.info
+        if cd_info.info != lf_info
+            @logmsg Logging.Debug+1 "central directory entry does not match local file header" i cd_info.info lf_info
             error("discrepancy detected in central directory entry $i")
         end
     end

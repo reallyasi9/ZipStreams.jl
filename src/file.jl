@@ -45,6 +45,12 @@ function Base.read(io::IO, ::Type{ZipFileInformation}, signature::UInt32)
     end
     central_directory = sig == SIG_CENTRAL_DIRECTORY
 
+    # we don't use this information
+    if central_directory
+        # version used
+        skip(io, 2)
+    end
+
     version_needed = readle(io, UInt16)
     if version_needed & 0xff > ZIP64_MINIMUM_VERSION
         @warn "Version needed exceeds ISO standard" version_needed
