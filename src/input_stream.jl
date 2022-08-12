@@ -1,6 +1,7 @@
 import Base: HasEltype, IteratorEltype, IteratorSize, SizeUnknown, close, eltype, eof, iterate, read, show
 using Logging
 using Printf
+using TranscodingStreams
 
 """
     ZipFileInputStream

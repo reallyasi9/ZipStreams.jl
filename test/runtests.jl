@@ -62,27 +62,27 @@ end
     end
 end
 
-@testset "CRC32InputStream" begin
-    s = ZipStreams.CRC32InputStream(IOBuffer(UInt8[0]))
-    @test s.crc32 == 0x00000000
-    @test !eof(s)
-    @test bytesavailable(s) == 1
+@testset "CRC32Stream" begin
+    # raw codec transcode
+    c = ZipStreams.CRC32Codec()
+    @test c.crc32 == ZipStreams.CRC32_INIT
 
-    read(s)
-    @test s.crc32 == 0xd202ef8d
-    @test eof(s)
-    @test bytesavailable(s) == 0
+    input = UInt8[0]
+    @test transcode(c, input) == input
+    @test c.crc32 == 0xd202ef8d
 
+    # stream transcode
+    s = ZipStreams.CRC32Stream(IOBuffer())
     @test isempty(read(s))
 
-    s = ZipStreams.CRC32InputStream(IOBuffer(UInt8[1, 2, 3, 4, 5, 6, 7, 8]))
+    s = ZipStreams.CRC32Stream(IOBuffer(UInt8[1, 2, 3, 4, 5, 6, 7, 8]))
     @test read(s, 4) == UInt8[1, 2, 3, 4]
-    @test s.crc32 == 0xb63cfbcd
+    @test s.codec.crc32 == 0xb63cfbcd
     @test !eof(s)
     @test bytesavailable(s) == 4
 
     @test read(s, 4) == UInt8[5, 6, 7, 8]
-    @test s.crc32 == 0x3fca88c5
+    @test s.codec.crc32 == 0x3fca88c5
     @test eof(s)
     @test bytesavailable(s) == 0
 end
