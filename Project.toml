@@ -1,4 +1,4 @@
-name = "ZipFiles"
+name = "ZipStreams"
 uuid = "d1ba5cbe-eaf4-46e4-b1fe-0fd0bb93243b"
 authors = ["Phil Killewald <reallyasi9@users.noreply.github.com>"]
 version = "0.1.0"
@@ -11,7 +11,6 @@ Logging = "56ddb016-857b-54e1-b83d-db4d58db5568"
 Printf = "de0858da-6303-5e67-8744-51eddeeeb8d7"
 StringEncodings = "69024149-9ee7-55f6-a4c4-859efe599b68"
 TranscodingStreams = "3bb67fe8-82b1-5028-8e26-92a6c54297fa"
-ZipFile = "a5390f91-8eb1-5f08-bee0-b1d1ffed6cea"
 
 [compat]
 julia = "1.7.0"
@@ -20,6 +19,7 @@ julia = "1.7.0"
 BenchmarkTools = "6e4b80f9-dd63-53aa-95a3-0cdb28fa8baf"
 Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+ZipFile = "a5390f91-8eb1-5f08-bee0-b1d1ffed6cea"
 
 [targets]
-test = ["Test", "BenchmarkTools", "Random"]
+test = ["Test", "BenchmarkTools", "Random", "ZipFile"]

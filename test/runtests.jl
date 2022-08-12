@@ -1,6 +1,6 @@
 using Dates
 using Test
-using ZipFiles
+using ZipStreams
 using Random
 
 const EMPTY_FILE = joinpath(dirname(@__FILE__), "empty.zip")
@@ -9,91 +9,86 @@ const INFOZIP_FILE = joinpath(dirname(@__FILE__), "infozip.zip")
 const ZIP64_FILE = joinpath(dirname(@__FILE__), "zip64.zip")
 const ZIP64_2_FILE = joinpath(dirname(@__FILE__), "zip64-2.zip")
 
-@test Any[] == detect_ambiguities(Base, Core, ZipFiles)
+@test Any[] == detect_ambiguities(Base, Core, ZipStreams)
 
 @testset "MSDOSDateTime" begin
-    @testset "Year0Days" begin
-        for month in 0b000000000:0b000100000:0b111100000
-            for day in 0b00000:0b00001:0b11111
-                if month == 0 || month>>5 > 12 || day == 0 || day > 31 || isnothing(tryparse(Date, "1980-$(string(month>>5, base=10))-$(string(day, base=10))"))
-                    @test_throws ArgumentError ZipFiles.msdos2datetime(UInt16(month | day), 0x0000)
-                else
-                    @test ZipFiles.msdos2datetime(UInt16(month | day), 0x0000) == DateTime(1980, month>>5, day, 0, 0, 0)
-                end
-            end
-        end
-    end
-    @testset "Day1Times" begin
-        # Note: Julia considers 24:00:00 to be equal to 00:00:00 the next day
-        for hour in 0b0000000000000000:0b100000000000:0b1111100000000000
-            for minute in 0b00000000000:0b00000100000:0b11111100000
-                for second in 0b00000:0b00001:0b11111
-                    if (hour>>11 > 23 || minute>>5 > 59 || second*2 >= 60) && !(hour>>11 == 24 && minute>>5 == 0 && second == 0)
-                        @test_throws ArgumentError ZipFiles.msdos2datetime(0x0021, UInt16(hour | minute | second))
-                    else
-                        @test ZipFiles.msdos2datetime(0x0021, UInt16(hour | minute | second)) == DateTime(1980, 1, 1, hour>>11, minute>>5, second*2)
-                    end
-                end
-            end
-        end
-    end
+    # round trip
+    test_now = now()
+    @test test_now - (test_now |> ZipStreams.datetime2msdos |> ZipStreams.msdos2datetime) < Second(2)
+
+    # minimum datetime
+    @test ZipStreams.datetime2msdos(DateTime(1980, 1, 1, 0, 0, 0)) == (0x0021, 0x0000)
+    @test ZipStreams.msdos2datetime(0x0021, 0x0000) == DateTime(1980, 1, 1, 0, 0, 0)
+    # equivalent in Julia
+    @test ZipStreams.datetime2msdos(DateTime(1979,12,31,24, 0, 0)) == (0x0021, 0x0000)
+    # errors (separate minima for day and month)
+    @test_throws InexactError ZipStreams.datetime2msdos(DateTime(1979,12,31,23,59,59))
+    @test_throws ArgumentError ZipStreams.msdos2datetime(0x0040, 0x0000)
+    @test_throws ArgumentError ZipStreams.msdos2datetime(0x0001, 0x0000)
+
+    # maximum datetime
+    @test ZipStreams.datetime2msdos(DateTime(2107,12,31,23,59,58)) == (0xff9f, 0xbf7d)
+    @test ZipStreams.msdos2datetime(0xff9f, 0xbf7d) == DateTime(2107,12,31,23,59,58)
+    # errors (separate maxima for month/day, hour, minute, and second)
+    @test_throws ArgumentError ZipStreams.datetime2msdos(DateTime(2107,12,31,24, 0, 0))
+    @test_throws ArgumentError ZipStreams.msdos2datetime(0xffa0, 0x0000)
+    @test_throws ArgumentError ZipStreams.msdos2datetime(0xffa0, 0x0000)
+    @test_throws ArgumentError ZipStreams.msdos2datetime(0x0000, 0xc000)
+    @test_throws ArgumentError ZipStreams.msdos2datetime(0x0000, 0xbf80)
+    @test_throws ArgumentError ZipStreams.msdos2datetime(0x0000, 0xbf7e)
 end
 
 @testset "CRC32" begin
     @testset "Array" begin
-        @test ZipFiles.crc32(UInt8[]) == 0x00000000
-        @test ZipFiles.crc32(UInt8[0]) == 0xd202ef8d
-        @test ZipFiles.crc32(UInt8[1, 2, 3, 4]) == 0xb63cfbcd
+        @test ZipStreams.crc32(UInt8[]) == 0x00000000
+        @test ZipStreams.crc32(UInt8[0]) == 0xd202ef8d
+        @test ZipStreams.crc32(UInt8[1, 2, 3, 4]) == 0xb63cfbcd
 
-        @test ZipFiles.crc32(UInt8[5, 6, 7, 8], ZipFiles.crc32(UInt8[1, 2, 3, 4])) ==
-            ZipFiles.crc32(UInt8[1, 2, 3, 4, 5, 6, 7, 8]) ==
+        @test ZipStreams.crc32(UInt8[5, 6, 7, 8], ZipStreams.crc32(UInt8[1, 2, 3, 4])) ==
+            ZipStreams.crc32(UInt8[1, 2, 3, 4, 5, 6, 7, 8]) ==
             0x3fca88c5
 
-        @test ZipFiles.crc32(UInt16[0x0201, 0x0403]) ==
-            ZipFiles.crc32(UInt8[1, 2, 3, 4]) ==
+        @test ZipStreams.crc32(UInt16[0x0201, 0x0403]) ==
+            ZipStreams.crc32(UInt8[1, 2, 3, 4]) ==
             0xb63cfbcd
     end
     @testset "String" begin
-        @test ZipFiles.crc32("") == 0x00000000
-        @test ZipFiles.crc32("The quick brown fox jumps over the lazy dog") == 0x414fa339
+        @test ZipStreams.crc32("") == 0x00000000
+        @test ZipStreams.crc32("The quick brown fox jumps over the lazy dog") == 0x414fa339
 
-        @test ZipFiles.crc32("Julia!", ZipFiles.crc32("Hello ")) ==
-            ZipFiles.crc32("Hello Julia!") ==
+        @test ZipStreams.crc32("Julia!", ZipStreams.crc32("Hello ")) ==
+            ZipStreams.crc32("Hello Julia!") ==
             0x424b94c7
     end
 end
 
 @testset "CRC32InputStream" begin
-    s = ZipFiles.CRC32InputStream(IOBuffer(UInt8[0]))
+    s = ZipStreams.CRC32InputStream(IOBuffer(UInt8[0]))
     @test s.crc32 == 0x00000000
-    @test s.bytes_read == 0
     @test !eof(s)
     @test bytesavailable(s) == 1
 
     read(s)
     @test s.crc32 == 0xd202ef8d
-    @test s.bytes_read == 1
     @test eof(s)
     @test bytesavailable(s) == 0
 
     @test isempty(read(s))
 
-    s = ZipFiles.CRC32InputStream(IOBuffer(UInt8[1, 2, 3, 4, 5, 6, 7, 8]))
+    s = ZipStreams.CRC32InputStream(IOBuffer(UInt8[1, 2, 3, 4, 5, 6, 7, 8]))
     @test read(s, 4) == UInt8[1, 2, 3, 4]
     @test s.crc32 == 0xb63cfbcd
-    @test s.bytes_read == 4
     @test !eof(s)
     @test bytesavailable(s) == 4
 
     @test read(s, 4) == UInt8[5, 6, 7, 8]
     @test s.crc32 == 0x3fca88c5
-    @test s.bytes_read == 8
     @test eof(s)
     @test bytesavailable(s) == 0
 end
 
 @testset "TruncatedInputStream" begin
-    s = ZipFiles.TruncatedInputStream(
+    s = ZipStreams.TruncatedInputStream(
         IOBuffer("The quick brown fox jumps over the lazy dog"), 15
     )
     @test !eof(s)
@@ -104,7 +99,7 @@ end
     @test bytesavailable(s) == 0
     @test read(s) == UInt8[]
 
-    s = ZipFiles.TruncatedInputStream(
+    s = ZipStreams.TruncatedInputStream(
         IOBuffer("The quick brown fox jumps over the lazy dog"), 100
     )
     @test bytesavailable(s) == 43
@@ -116,7 +111,7 @@ end
 end
 
 @testset "SentinelInputStream" begin
-    s = ZipFiles.SentinelInputStream(
+    s = ZipStreams.SentinelInputStream(
         IOBuffer(UInt8[0, 1, 2, 3, 4, 5, 6, 7, 8]), UInt8[4, 5, 6]
     )
     @test !eof(s)
@@ -127,7 +122,7 @@ end
     @test read(s) == UInt8[]
     @test_throws EOFError read(s, UInt8)
 
-    s = ZipFiles.SentinelInputStream(
+    s = ZipStreams.SentinelInputStream(
         IOBuffer("The quick brown fox jumps over the lazy dog"), " fox"
     )
     @test_broken bytesavailable(s) == 15
@@ -142,7 +137,7 @@ end
         fake_data[end-2:end] .= signature
         stream = IOBuffer(fake_data)
         seekend(stream)
-        ZipFiles.seek_backward_to(stream, signature)
+        ZipStreams.seek_backward_to(stream, signature)
         @test position(stream) == length(fake_data)-length(signature) # streams are zero indexed
     end
 
@@ -154,7 +149,7 @@ end
             fake_data[pos:pos+length(signature)-1] .= signature
             stream = IOBuffer(fake_data)
             seekend(stream)
-            ZipFiles.seek_backward_to(stream, signature)
+            ZipStreams.seek_backward_to(stream, signature)
             @test position(stream) == pos-1 # streams are zero indexed
             @test read(stream, length(signature)) == signature
         end
@@ -167,7 +162,7 @@ end
         fake_data[9001:9003] .= signature
         stream = IOBuffer(fake_data)
         seekend(stream)
-        ZipFiles.seek_backward_to(stream, signature)
+        ZipStreams.seek_backward_to(stream, signature)
         @test position(stream) == 9000
         @test read(stream, length(signature)) == signature
     end
@@ -179,7 +174,7 @@ end
         fake_data[9981:9983] .= signature
         stream = IOBuffer(fake_data)
         seekend(stream)
-        ZipFiles.seek_backward_to(stream, signature)
+        ZipStreams.seek_backward_to(stream, signature)
         @test position(stream) == 9990
         @test read(stream, length(signature)) == signature
     end
@@ -190,7 +185,7 @@ end
         fake_data[end-4100:end-4088] .= signature
         stream = IOBuffer(fake_data)
         seekend(stream)
-        ZipFiles.seek_backward_to(stream, signature)
+        ZipStreams.seek_backward_to(stream, signature)
         @test position(stream) == length(fake_data) - 4101
         @test read(stream, length(signature)) == signature
     end
@@ -200,7 +195,7 @@ end
         fake_data = UInt8.(rand('a':'z', 10_000))
         stream = IOBuffer(fake_data)
         seekend(stream)
-        ZipFiles.seek_backward_to(stream, signature)
+        ZipStreams.seek_backward_to(stream, signature)
         @test eof(stream)
     end
 end
@@ -217,8 +212,8 @@ end
                 expected=[
                     (
                         offset=0,
-                        value=ZipFiles.ZipFileInformation(
-                            ZipFiles.COMPRESSION_STORE,
+                        value=ZipStreams.ZipFileInformation(
+                            ZipStreams.COMPRESSION_STORE,
                             8856,
                             8856,
                             DateTime(2020, 1, 16, 7, 54, 30),
@@ -238,8 +233,8 @@ end
                 expected=[
                     (
                         offset=0,
-                        value=ZipFiles.ZipFileInformation(
-                            ZipFiles.COMPRESSION_STORE,
+                        value=ZipStreams.ZipFileInformation(
+                            ZipStreams.COMPRESSION_STORE,
                             0,
                             0,
                             DateTime(2013, 7, 21, 18, 36, 32),
@@ -254,8 +249,8 @@ end
                     ),
                     (
                         offset=0x42,
-                        value=ZipFiles.ZipFileInformation(
-                            ZipFiles.COMPRESSION_DEFLATE,
+                        value=ZipStreams.ZipFileInformation(
+                            ZipStreams.COMPRESSION_DEFLATE,
                             60,
                             11,
                             DateTime(2013, 7, 21, 18, 36, 32),
@@ -270,8 +265,8 @@ end
                     ),
                     (
                         offset=0x98,
-                        value=ZipFiles.ZipFileInformation(
-                            ZipFiles.COMPRESSION_STORE,
+                        value=ZipStreams.ZipFileInformation(
+                            ZipStreams.COMPRESSION_STORE,
                             30,
                             30,
                             DateTime(2013, 7, 21, 18, 29, 58),
@@ -286,8 +281,8 @@ end
                     ),
                     (
                         offset=0x100,
-                        value=ZipFiles.ZipFileInformation(
-                            ZipFiles.COMPRESSION_STORE,
+                        value=ZipStreams.ZipFileInformation(
+                            ZipStreams.COMPRESSION_STORE,
                             13,
                             13,
                             DateTime(2013, 7, 21, 18, 27, 42),
@@ -307,11 +302,11 @@ end
         for test in tests
             open(test.file, "r") do f
                 if typeof(test.expected) <: Type
-                    @test_throws test.expected read(f, ZipFiles.LocalFileHeader)
+                    @test_throws test.expected read(f, ZipStreams.LocalFileHeader)
                 else
                     for file in test.expected
                         seek(f, file.offset)
-                        @test read(f, ZipFiles.LocalFileHeader).info == file.value
+                        @test read(f, ZipStreams.LocalFileHeader).info == file.value
                     end
                 end
             end

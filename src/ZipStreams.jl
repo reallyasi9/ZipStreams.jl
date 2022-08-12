@@ -2,18 +2,26 @@
 A Julia package for read ZIP archive files from a stream (NO SEEKING!)
 
 This package provides support for reading and writing ZIP archives in Julia.
-Install it via the Julia package manager using ``Pkg.add("ZipFiles")``.
+Install it via the Julia package manager using ``Pkg.add("ZipStreams")``.
 
 The ZIP file format is described in
 http://www.pkware.com/documents/casestudies/APPNOTE.TXT
 
 # Example
-The example below writes a new ZIP file and then reads back the contents.
-```
-julia> using ZipFiles
+The example below opens a ZIP archive and reads back the contents to console.
+```julia
+using ZipFiles
+
+ZipStreams.open("archive.zip") do z
+    for file in z
+        print(read(file, String))
+    end
+end
 ```
 """
-module ZipFiles
+module ZipStreams
+
+export validate, zipstream
 
 include("crc32.jl")
 include("io.jl")
