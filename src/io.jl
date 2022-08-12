@@ -109,10 +109,15 @@ function msdos2datetime(dosdate::UInt16, dostime::UInt16)
 
     return DateTime(year, month, day, hour, minute, second)
 end
+msdos2datetime(datetime::Tuple{UInt16, UInt16}) = msdos2datetime(datetime[1], datetime[2])
 
 @doc (@doc msdos2datetime) function datetime2msdos(datetime::DateTime)
+    # corner case: 24:00:00 of 12/31/2107 is interpreted by Julia to be in year 2108
+    if year(datetime) > 2107
+        throw(ArgumentError("Year: $(year(datetime)) out of range (1980:2107)"))
+    end
     dosdate =
-        UInt16(day(datetime) - 1) |
+        UInt16(day(datetime)) |
         (UInt16(month(datetime)) << 5) |
         ((UInt16(year(datetime) - 1980) & 0x7f) << 9)
     dostime =
