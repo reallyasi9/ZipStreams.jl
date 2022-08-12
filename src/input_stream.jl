@@ -209,6 +209,9 @@ end
 zipstream(fname::AbstractString; kwargs...) = zipstream(open(fname, "r"); kwargs...)
 zipstream(f::F, x; kwargs...) where {F<:Function} = zipstream(x; kwargs...) |> f
 
+open(fname::AbstractString; kwargs...) = zipstream(fname; kwargs...)
+open(f::F, x; kwargs...) where {F<:Function} = zipstream(x; kwargs...) |> f
+
 Base.eof(zs::ZipArchiveInputStream) = eof(zs.source)
 Base.close(zs::ZipArchiveInputStream) = close(zs.source)
 
