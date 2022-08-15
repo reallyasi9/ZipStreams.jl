@@ -27,10 +27,8 @@ struct ZipFileInformation
     compressed_size::UInt64
     last_modified::DateTime
     crc32::UInt32
-    offset::UInt64
 
     name::String
-    comment::String
 
     descriptor_follows::Bool
     utf8::Bool
@@ -64,11 +62,10 @@ function Base.show(io::IO, info::ZipFileInformation)
     # windows: archive, hidden, system
     # unix/mac: group r/w/x, user r/w/x
     if endswith(info.name, "/") && info.uncompressed_size == 0
-        print(io, "dir ")
+        print(io, "dir  ")
     else
-        print(io, "file")
+        print(io, "file ")
     end
-    print(io, " ")
     # TODO: version used to store: DD.D
     # TODO: string stating file system type
     # original size: at least 8 digits wide
@@ -96,33 +93,35 @@ function Base.show(io::IO, info::ZipFileInformation)
         print(io, COMPRESSION_INFO_FORMAT[info.compression_method+1], " ")
     end
     # last modified date and time
-    print(io, Dates.format(info.last_modified, dateformat"dd-uuu-yy HH:MM "))
+    print(io, Dates.format(info.last_modified, dateformat"dd-uuu-yy HH:MM:ss "))
+
+    # extra: CRC32
+    @printf(io, "0x%08x ", info.crc32)
     # name with directory info
     print(io, info.name)
 end
 
-function Base.read(io::IO, ::Type{ZipFileInformation}, signature::UInt32; skip_signature::Bool=false, offset::UInt64=UInt64(0))
-    if !skip_signature
-        sig = readle(io, UInt32)
-        if sig != signature
-            error(
-                "unexpected signature $(string(sig, base=16)), expected $(string(signature, base=16))",
-            )
-        end
-    end
-    central_directory = signature == SIG_CENTRAL_DIRECTORY
+"""
+    LocalFileHeader
 
-    # we don't use this information
-    if central_directory
-        # version used
-        skip(io, 2)
-    end
+An in-memory representation of the information contained in a Zip file local
+header.
 
+See: 4.3.7 of https://pkware.cachefly.net/webdocs/casestudies/APPNOTE.TXT
+"""
+struct LocalFileHeader
+    info::ZipFileInformation
+end
+
+function _read_version_needed(io::IO)
     version_needed = readle(io, UInt16)
     if version_needed & 0xff > ZIP64_MINIMUM_VERSION
         @warn "Version needed exceeds ISO standard" version_needed
     end
+    return version_needed
+end
 
+function _read_general_purpose_flags(io::IO)
     flags = readle(io, UInt16)
     if (
         flags &
@@ -130,49 +129,180 @@ function Base.read(io::IO, ::Type{ZipFileInformation}, signature::UInt32; skip_s
     ) != 0
         @warn "Unsupported general purpose flags detected" flags
     end
-    utf8 = (flags & FLAG_LANGUAGE_ENCODING) != 0
-    descriptor_follows = (flags & FLAG_FILE_SIZE_FOLLOWS) != 0
-    if descriptor_follows && central_directory
-        error("file size signature not allowed to follow central directory record")
-    end
+    return flags
+end
 
+function _read_compression_method(io::IO)
     compression_method = readle(io, UInt16)
     if compression_method ∉ (COMPRESSION_STORE, COMPRESSION_DEFLATE)
         error("unimplemented compression method $(compression_method)")
     end
+    return compression_method
+end
 
+function _read_last_modified(io)
     modtime = readle(io, UInt16)
     moddate = readle(io, UInt16)
-    last_modified = msdos2datetime(moddate, modtime)
+    return msdos2datetime(moddate, modtime)
+end
 
+function Base.read(io::IO, ::Type{LocalFileHeader})
+    # Do we need this?
+    #version_needed = _read_version_needed(io)
+    skip(io, 2)
+    flags = _read_general_purpose_flags(io)
+    utf8 = (flags & FLAG_LANGUAGE_ENCODING) != 0
+    descriptor_follows = (flags & FLAG_FILE_SIZE_FOLLOWS) != 0
+    compression_method = _read_compression_method(io)
+    last_modified = _read_last_modified(io)
     crc32 = readle(io, UInt32)
     compressed_size = UInt64(readle(io, UInt32))
     uncompressed_size = UInt64(readle(io, UInt32))
-
     filename_length = readle(io, UInt16)
     extrafield_length = readle(io, UInt16)
+    
+    encoding = utf8 ? enc"UTF-8" : enc"IBM437"
+    (filename, bytes_read) = readstring(io, filename_length; encoding = encoding)
 
-    # This is where the central directory and the local header differ.
-    comment_length = UInt16(0)
-    if central_directory
-        comment_length = readle(io, UInt16)
+    extra_read = 0
+    zip64 = false
+    while extra_read < extrafield_length
+        ex_signature = readle(io, UInt16)
+        ex_length = readle(io, UInt16)
+        extra_read += 4
 
-        disk = readle(io, UInt16)
-        if disk ∉ (0, 1)
-            @warn "Archives spanning multiple disks are not supported" disk
+        if ex_signature != HEADER_ZIP64
+            # TODO: other header types?
+            skip(io, ex_length)
+            extra_read += ex_length
+            continue
         end
 
-        # file attribute information: unused
-        skip(io, 6)
+        # MUST include BOTH original and compressed file size fields in local header per 4.5.3.
+        # Can have any number of fields in central directory, but MUST be in the same fixed order.
+        # MUST have 0xffffffff for sizes in original record per 4.5.3.
+        if uncompressed_size != typemax(UInt32)
+            error(
+                "Zip64-encoded does not signal uncompressed size: expected $(typemax(UInt32)), got $(uncompressed_size)",
+            )
+        end
+        uncompressed_size = readle(io, UInt64)
+        if compressed_size != typemax(UInt32)
+            error(
+                "Zip64-encoded does not signal compressed size: expected $(typemax(UInt32)), got $(compressed_size)",
+            )
+        end
+        compressed_size = readle(io, UInt64)
 
-        offset = UInt64(readle(io, UInt32))
+        zip64 = true
+        extra_read += ex_length
+        # NOTE: this is an assumption. Nothing in the spec says there can't be 
+        # more than one Zip64 header, nor what to do if such a case is found.
+        break
     end
+
+    # Skip past additional extra data that went unused
+    if extra_read < extrafield_length
+        skip(io, extrafield_length - extra_read)
+    end
+
+    info = ZipFileInformation(
+        compression_method,
+        uncompressed_size,
+        compressed_size,
+        last_modified,
+        crc32,
+        filename,
+        descriptor_follows,
+        utf8,
+        zip64,
+    )
+    return LocalFileHeader(info)
+
+end
+
+"""
+    CentralDirectoryHeader
+
+An in-memory representation of the Zip64 Central Directory (CD) record.
+
+See: 4.3.12 of https://pkware.cachefly.net/webdocs/casestudies/APPNOTE.TXT.
+
+# Notes
+- ISO/IEC 21320-1 requires disk spanning _not_ be used. However, the disk number
+itself is arbitrary.
+
+- APPNOTE specifies version 45 as the minimum version for reading and writing
+Zip64 files. ISO/IEC 21320-1 requires that the version number be no greater than
+45. The specification is not clear whether applications are allowed to lie about
+what version number was used to create the file, but ISO/IEC 21320-1 is clear
+that the maximum value for version needed to extract is 45.
+
+- APPNOTE 4.4.2 states that the upper byte of version made by can be ignored
+("Software _can_ use this information..."). The specification not clear whether
+the upper byte of version needed to extract can be treated the same way. This
+implementation ignores the upper byte.
+
+- ISO/IEC 21320-1 requires only certain bits of the general purpose bit flags
+are allowed to be set.
+
+- ISO/IEC 21320-1 allows only two types of compression: Store (0) and Deflate
+(8).
+
+- Internal and external file attributes are presently not used and set to zero
+when writing.
+
+- The specification is not clear whether the presence of Zip64 extra data within
+the Central Directory requires that the Zip64 EoCD and Zip64 EoCD locator be
+present in the archive (and vice versa). This implementation assumes that the
+two different Zip64 data records are independent; however, if any file within
+the archive is larger than 2^32-1 bytes or begins past an offset of 2^32-1,
+both types of Zip64 data records will be present in the archive due to
+requiring a 64-bit field to represent either the file size or file offset, and
+the specification that the Central Directory occur after all file data in the
+archive.
+
+- The specification is not clear about what to do in the case where there are
+multiple extra data records of the same kind. This implementation treats this
+case as an error.
+"""
+struct CentralDirectoryHeader
+    info::ZipFileInformation
+    offset::UInt64
+    comment::String
+end
+
+function Base.read(io::IO, ::Type{CentralDirectoryHeader})
+    # TODO: version used to store?
+    # version_store = readle(io, UInt16)
+    # TODO: do we need to use this ever?
+    # version_needed = _read_version_needed(io)
+    skip(io, 4)
+    flags = _read_general_purpose_flags(io)
+    utf8 = (flags & FLAG_LANGUAGE_ENCODING) != 0
+    descriptor_follows = (flags & FLAG_FILE_SIZE_FOLLOWS) != 0
+    if descriptor_follows
+        error("file size signature not allowed to follow central directory record")
+    end
+    compression_method = _read_compression_method(io)
+    last_modified = _read_last_modified(io)
+    crc32 = readle(io, UInt32)
+    compressed_size = UInt64(readle(io, UInt32))
+    uncompressed_size = UInt64(readle(io, UInt32))
+    filename_length = readle(io, UInt16)
+    extrafield_length = readle(io, UInt16)
+    comment_length = readle(io, UInt16)
+    # NOTE: we don't use disk, just warn about it
+    disk = readle(io, UInt16)
+    if disk ∉ (0, 1)
+        @warn "Archives spanning multiple disks are not supported" disk
+    end
+    # TODO: local and external file attribute information
+    skip(io, 6)
+    offset = UInt64(readle(io, UInt32))
 
     encoding = utf8 ? enc"UTF-8" : enc"IBM437"
     (filename, bytes_read) = readstring(io, filename_length; encoding = encoding)
-    if bytes_read != filename_length
-        error("EOF when reading file name")
-    end
 
     extra_read = 0
     zip64 = false
@@ -187,9 +317,8 @@ function Base.read(io::IO, ::Type{ZipFileInformation}, signature::UInt32; skip_s
             continue
         end
 
-        # MUST include BOTH original and compressed file size fields in local header per 4.5.3.
         # Can have any number of fields in central directory, but MUST be in the same fixed order.
-        nfields = central_directory ? min(ex_length ÷ 8, 3) : 2
+        nfields = min(ex_length ÷ 8, 3)
         # MUST have 0xffffffff for sizes in original record per 4.5.3.
         if nfields >= 1
             if uncompressed_size != typemax(UInt32)
@@ -228,43 +357,24 @@ function Base.read(io::IO, ::Type{ZipFileInformation}, signature::UInt32; skip_s
         skip(io, extrafield_length - extra_read)
     end
 
-    # comment_length will be zero here if not central directory
     (comment, bytes_read) = readstring(io, comment_length; encoding = encoding)
     if bytes_read != comment_length
         error("EOF when reading comment")
     end
 
-    return ZipFileInformation(
+    info = ZipFileInformation(
         compression_method,
         uncompressed_size,
         compressed_size,
         last_modified,
         crc32,
-        offset,
         filename,
         comment,
         descriptor_follows,
         utf8,
         zip64,
     )
-
-end
-
-"""
-    LocalFileHeader
-
-An in-memory representation of the information contained in a Zip file local
-header.
-
-See: 4.3.7 of https://pkware.cachefly.net/webdocs/casestudies/APPNOTE.TXT
-"""
-struct LocalFileHeader
-    info::ZipFileInformation
-end
-
-function Base.read(io::IO, ::Type{LocalFileHeader}; skip_signature::Bool=false, offset::UInt64=UInt64(0))
-    info = read(io, ZipFileInformation, SIG_LOCAL_FILE; skip_signature=skip_signature, offset=offset)
-    return LocalFileHeader(info)
+    return CentralDirectoryHeader(info, offset, comment)
 end
 
 function Base.write(io::IO, header::LocalFileHeader)
@@ -347,60 +457,6 @@ function Base.write(io::IO, header::LocalFileHeader)
     return nb
 end
 
-"""
-    CentralDirectoryHeader
-
-An in-memory representation of the Zip64 Central Directory (CD) record.
-
-See: 4.3.12 of https://pkware.cachefly.net/webdocs/casestudies/APPNOTE.TXT.
-
-# Notes
-- ISO/IEC 21320-1 requires disk spanning _not_ be used. However, the disk number
-itself is arbitrary.
-
-- APPNOTE specifies version 45 as the minimum version for reading and writing
-Zip64 files. ISO/IEC 21320-1 requires that the version number be no greater than
-45. The specification is not clear whether applications are allowed to lie about
-what version number was used to create the file, but ISO/IEC 21320-1 is clear
-that the maximum value for version needed to extract is 45.
-
-- APPNOTE 4.4.2 states that the upper byte of version made by can be ignored
-("Software _can_ use this information..."). The specification not clear whether
-the upper byte of version needed to extract can be treated the same way. This
-implementation ignores the upper byte.
-
-- ISO/IEC 21320-1 requires only certain bits of the general purpose bit flags
-are allowed to be set.
-
-- ISO/IEC 21320-1 allows only two types of compression: Store (0) and Deflate
-(8).
-
-- Internal and external file attributes are presently not used and set to zero
-when writing.
-
-- The specification is not clear whether the presence of Zip64 extra data within
-the Central Directory requires that the Zip64 EoCD and Zip64 EoCD locator be
-present in the archive (and vice versa). This implementation assumes that the
-two different Zip64 data records are independent; however, if any file within
-the archive is larger than 2^32-1 bytes or begins past an offset of 2^32-1,
-both types of Zip64 data records will be present in the archive due to
-requiring a 64-bit field to represent either the file size or file offset, and
-the specification that the Central Directory occur after all file data in the
-archive.
-
-- The specification is not clear about what to do in the case where there are
-multiple extra data records of the same kind. This implementation treats this
-case as an error.
-"""
-struct CentralDirectoryHeader
-    info::ZipFileInformation
-end
-
-function Base.read(io::IO, ::Type{CentralDirectoryHeader}; skip_signature::Bool=false)
-    info = read(io, ZipFileInformation, SIG_CENTRAL_DIRECTORY; skip_signature=skip_signature)
-    return CentralDirectoryHeader(info)
-end
-
 function Base.write(io::IO, header::CentralDirectoryHeader)
     nb = 0
     # signature: 4 bytes
@@ -468,7 +524,7 @@ function Base.write(io::IO, header::CentralDirectoryHeader)
     nb += writele(io, UInt16(extra_length))
 
     # comment length: 2 bytes
-    comment_encoded = encode(header.info.comment, encoding)
+    comment_encoded = encode(header.comment, encoding)
     nb += writele(io, UInt16(length(comment_encoded)))
 
     # disk number start: 2 bytes
@@ -484,7 +540,7 @@ function Base.write(io::IO, header::CentralDirectoryHeader)
     if zip64
         nb += writele(io, typemax(UInt32))
     else
-        nb += writele(io, header.info.offset % UInt32)
+        nb += writele(io, header.offset % UInt32)
     end
 
     # file name: variable

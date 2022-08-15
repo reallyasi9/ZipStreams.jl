@@ -8,6 +8,7 @@ const EOCD_FILE = joinpath(dirname(@__FILE__), "EOCD.zip")
 const INFOZIP_FILE = joinpath(dirname(@__FILE__), "infozip.zip")
 const ZIP64_FILE = joinpath(dirname(@__FILE__), "zip64.zip")
 const ZIP64_2_FILE = joinpath(dirname(@__FILE__), "zip64-2.zip")
+const ZIP64_EXTRA_FILE = joinpath(dirname(@__FILE__), "zip64-extra.zip")
 
 @test Any[] == detect_ambiguities(Base, Core, ZipStreams)
 
@@ -63,26 +64,19 @@ end
 end
 
 @testset "CRC32Stream" begin
-    # raw codec transcode
-    c = ZipStreams.CRC32Codec()
-    @test c.crc32 == ZipStreams.CRC32_INIT
-
-    input = UInt8[0]
-    @test transcode(c, input) == input
-    @test c.crc32 == 0xd202ef8d
-
     # stream transcode
-    s = ZipStreams.CRC32Stream(IOBuffer())
+    s = ZipStreams.CRC32InputStream(IOBuffer())
     @test isempty(read(s))
+    @test s.crc32 == ZipStreams.CRC32_INIT
 
-    s = ZipStreams.CRC32Stream(IOBuffer(UInt8[1, 2, 3, 4, 5, 6, 7, 8]))
+    s = ZipStreams.CRC32InputStream(IOBuffer(UInt8[1, 2, 3, 4, 5, 6, 7, 8]))
     @test read(s, 4) == UInt8[1, 2, 3, 4]
-    @test s.codec.crc32 == 0xb63cfbcd
+    @test s.crc32 == 0xb63cfbcd
     @test !eof(s)
     @test bytesavailable(s) == 4
 
     @test read(s, 4) == UInt8[5, 6, 7, 8]
-    @test s.codec.crc32 == 0x3fca88c5
+    @test s.crc32 == 0x3fca88c5
     @test eof(s)
     @test bytesavailable(s) == 0
 end
@@ -108,26 +102,6 @@ end
     @test eof(s)
     @test bytesavailable(s) == 0
     @test read(s) == UInt8[]
-end
-
-@testset "SentinelInputStream" begin
-    s = ZipStreams.SentinelInputStream(
-        IOBuffer(UInt8[0, 1, 2, 3, 4, 5, 6, 7, 8]), UInt8[4, 5, 6]
-    )
-    @test !eof(s)
-    @test_broken bytesavailable(s) == 4
-    @test read(s, UInt8) == 0x00
-    @test read(s) == UInt8[1, 2, 3]
-    @test eof(s)
-    @test read(s) == UInt8[]
-    @test_throws EOFError read(s, UInt8)
-
-    s = ZipStreams.SentinelInputStream(
-        IOBuffer("The quick brown fox jumps over the lazy dog"), " fox"
-    )
-    @test_broken bytesavailable(s) == 15
-    @test read(s, String) == "The quick brown"
-    @test eof(s)
 end
 
 @testset "Seek backward" begin
@@ -202,113 +176,100 @@ end
 
 @testset "ZipStream" begin
     @testset "LocalFileHeader" begin
-        tests = [
-            (
-                file=EMPTY_FILE,
-                expected=ErrorException,
-            ),
-            (
-                file=EOCD_FILE,
-                expected=[
-                    (
-                        offset=0,
-                        value=ZipStreams.ZipFileInformation(
-                            ZipStreams.COMPRESSION_STORE,
-                            8856,
-                            8856,
-                            DateTime(2020, 1, 16, 7, 54, 30),
-                            0x9105cddb,
-                            0,
-                            "TestA.xlsx",
-                            "",
-                            false,
-                            false,
-                            false,
-                        ),
-                    ),
-                ]
-            ),
-            (
-                file=INFOZIP_FILE,
-                expected=[
-                    (
-                        offset=0,
-                        value=ZipStreams.ZipFileInformation(
-                            ZipStreams.COMPRESSION_STORE,
-                            0,
-                            0,
-                            DateTime(2013, 7, 21, 18, 36, 32),
-                            0x00000000,
-                            0,
-                            "ziptest/",
-                            "",
-                            false,
-                            false,
-                            false,
-                        ),
-                    ),
-                    (
-                        offset=0x42,
-                        value=ZipStreams.ZipFileInformation(
-                            ZipStreams.COMPRESSION_DEFLATE,
-                            60,
-                            11,
-                            DateTime(2013, 7, 21, 18, 36, 32),
-                            0x9925b55b,
-                            0x42,
-                            "ziptest/julia.txt",
-                            "",
-                            false,
-                            false,
-                            false,
-                        ),
-                    ),
-                    (
-                        offset=0x98,
-                        value=ZipStreams.ZipFileInformation(
-                            ZipStreams.COMPRESSION_STORE,
-                            30,
-                            30,
-                            DateTime(2013, 7, 21, 18, 29, 58),
-                            0xcb652a62,
-                            0x98,
-                            "ziptest/info.txt",
-                            "",
-                            false,
-                            false,
-                            false,
-                        ),
-                    ),
-                    (
-                        offset=0x100,
-                        value=ZipStreams.ZipFileInformation(
-                            ZipStreams.COMPRESSION_STORE,
-                            13,
-                            13,
-                            DateTime(2013, 7, 21, 18, 27, 42),
-                            0x01d7afb4,
-                            0x100,
-                            "ziptest/hello.txt",
-                            "",
-                            false,
-                            false,
-                            false,
-                        ),
-                    ),
-                ],
-            ),
-        ]
+        @testset "Empty archive" begin
+            open(EMPTY_FILE, "r") do f
+                skip(f, 4)
+                @test_throws ArgumentError read(f, ZipStreams.LocalFileHeader)
+            end
+        end
 
-        for test in tests
-            open(test.file, "r") do f
-                if typeof(test.expected) <: Type
-                    @test_throws test.expected read(f, ZipStreams.LocalFileHeader)
-                else
-                    for file in test.expected
-                        seek(f, file.offset)
-                        @test read(f, ZipStreams.LocalFileHeader).info == file.value
-                    end
-                end
+        @testset "Zipped zip" begin
+            open(EOCD_FILE, "r") do f
+                skip(f, 4)
+                @test read(f, ZipStreams.LocalFileHeader).info == ZipStreams.ZipFileInformation(
+                    ZipStreams.COMPRESSION_STORE,
+                    8856,
+                    8856,
+                    DateTime(2020, 1, 16, 7, 54, 30),
+                    0x9105cddb,
+                    "TestA.xlsx",
+                    false,
+                    false,
+                    false,
+                )
+            end
+        end
+
+        @testset "Multifile zip" begin
+            open(INFOZIP_FILE, "r") do f
+                skip(f, 4)
+                @test read(f, ZipStreams.LocalFileHeader).info == ZipStreams.ZipFileInformation(
+                    ZipStreams.COMPRESSION_STORE,
+                    0,
+                    0,
+                    DateTime(2013, 7, 21, 18, 36, 32),
+                    0x00000000,
+                    "ziptest/",
+                    false,
+                    false,
+                    false,
+                )
+
+                skip(f, 4)
+                @test read(f, ZipStreams.LocalFileHeader).info == ZipStreams.ZipFileInformation(
+                    ZipStreams.COMPRESSION_DEFLATE,
+                    60,
+                    11,
+                    DateTime(2013, 7, 21, 18, 36, 32),
+                    0x9925b55b,
+                    "ziptest/julia.txt",
+                    false,
+                    false,
+                    false,
+                )
+
+                skip(f, 11 + 4)
+                @test read(f, ZipStreams.LocalFileHeader).info == ZipStreams.ZipFileInformation(
+                    ZipStreams.COMPRESSION_STORE,
+                    30,
+                    30,
+                    DateTime(2013, 7, 21, 18, 29, 58),
+                    0xcb652a62,
+                    "ziptest/info.txt",
+                    false,
+                    false,
+                    false,
+                )
+
+                skip(f, 30 + 4)
+                @test read(f, ZipStreams.LocalFileHeader).info == ZipStreams.ZipFileInformation(
+                    ZipStreams.COMPRESSION_STORE,
+                    13,
+                    13,
+                    DateTime(2013, 7, 21, 18, 27, 42),
+                    0x01d7afb4,
+                    "ziptest/hello.txt",
+                    false,
+                    false,
+                    false,
+                )
+            end
+        end
+
+        @testset "Zip64" begin
+            open(ZIP64_EXTRA_FILE, "r") do f
+                skip(f, 4)
+                @test read(f, ZipStreams.LocalFileHeader).info == ZipStreams.ZipFileInformation(
+                    ZipStreams.COMPRESSION_STORE,
+                    15,
+                    15,
+                    DateTime(2022, 7, 30, 9, 50, 00),
+                    0x7505c420,
+                    "-",
+                    false,
+                    false,
+                    true,
+                )
             end
         end
     end
