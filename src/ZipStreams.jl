@@ -26,6 +26,7 @@ export validate, zipstream
 include("crc32.jl")
 include("io.jl")
 include("constants.jl")
+include("headers.jl")
 include("utility_streams.jl")
 include("file.jl")
 include("input_stream.jl")

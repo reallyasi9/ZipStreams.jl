@@ -1,4 +1,4 @@
-import Base: HasEltype, IteratorEltype, IteratorSize, SizeUnknown, close, eltype, eof, iterate, position, read, seek, show, skip, unsafe_read
+import Base: HasEltype, IteratorEltype, IteratorSize, SizeUnknown, close, eltype, eof, iterate, isreadable, iswritable, position, read, seek, show, skip, unsafe_read
 using Logging
 using Printf
 using TranscodingStreams
@@ -80,6 +80,8 @@ function Base.skip(zf::ZipFileInputStream, n::Integer)
     skip(zf.source, n)
     return
 end
+Base.isreadable(::ZipFileInputStream) = true
+Base.iswritable(::ZipFileInputStream) = false
 
 """
     ZipArchiveInputStream
@@ -245,6 +247,9 @@ function Base.seek(::ZipArchiveInputStream, ::Integer)
     error("stream cannot seek")
 end
 
+Base.isreadable(::ZipArchiveInputStream) = true
+Base.iswritable(::ZipArchiveInputStream) = false
+
 """
     validate(zs)
 
@@ -272,14 +277,13 @@ function validate(zs::ZipArchiveInputStream)
     for f in zs
         validate(f)
     end
-    # Guaranteed to be at the end.
+    # Guaranteed to be after the last local header found,
+    # maybe after the central directory?
     if !zs.store_file_info
         @error "Unable to validate files against Central Directory because `store_file_info` argument set to `false`"
         return
     end
     @debug "Central directory for validation" zs.directory
-    # Seek backward to and read the directory.
-    _seek_to_directory_backward(zs.source)
     # Read off the directory contents and check what was found.
     ncd = 0
     for (i, lf_info) in enumerate(zs.directory)
@@ -298,10 +302,18 @@ function validate(zs::ZipArchiveInputStream)
 end
 
 function Base.iterate(zs::ZipArchiveInputStream, state::Int=0)
-    # skip everything at the start of the archive that is not a local file header.
-    readuntil(zs, htol(reinterpret(UInt8, [SIG_LOCAL_FILE])))
-    if eof(zs)
-        return nothing
+    # skip everything at the start of the archive that is not the next signature.
+    while true
+        readuntil(zs, htol(reinterpret(UInt8, [SIG_L])))
+        if eof(zs)
+            return nothing
+        end
+        highbytes = readle(zs, UInt16)
+        if highbytes == SIG_LOCAL_FILE_H
+            break
+        elseif highbytes == SIG_CENTRAL_DIRECTORY_H
+            return nothing
+        end
     end
     
     # add the local file header to the directory
