@@ -1,4 +1,4 @@
-import Base: HasEltype, IteratorEltype, IteratorSize, SizeUnknown, close, eltype, eof, iterate, read, show
+import Base: HasEltype, IteratorEltype, IteratorSize, SizeUnknown, close, eltype, eof, iterate, position, read, seek, show, skip, unsafe_read
 using Logging
 using Printf
 using TranscodingStreams
@@ -67,8 +67,19 @@ function validate(zf::ZipFileInputStream)
     end
 end
 
-Base.read(zf::ZipFileInputStream, ::Type{UInt8}) = read(zf.source, UInt8)
+Base.read(zf::ZipFileInputStream, ::Type{T}) where T = read(zf.source, T)
+Base.unsafe_read(zf::ZipFileInputStream, p::Ptr{UInt8}, nb::UInt64) = unsafe_read(zf.source, p, nb)
 Base.eof(zf::ZipFileInputStream) = eof(zf.source)
+function Base.seek(zf::ZipFileInputStream, n::Integer)
+    error("stream cannot seek")
+end
+function Base.skip(zf::ZipFileInputStream, n::Integer)
+    if n < 0
+        error("stream cannot skip backward")
+    end
+    skip(zf.source, n)
+    return
+end
 
 """
     ZipArchiveInputStream
@@ -102,35 +113,31 @@ object that will lazily extract (and decompress) file data from the archive.
 
 Create `ZipArchiveInputStream` objects using the [`zipstream`](@ref) function.
 """
-mutable struct ZipArchiveInputStream{S<:IO}
+mutable struct ZipArchiveInputStream{S<:IO} <: IO
     source::S
 
     store_file_info::Bool
     calculate_crc32s::Bool
     directory::Vector{ZipFileInformation}
+
+    _bytes_read::UInt64
 end
 
 function Base.show(io::IO, za::ZipArchiveInputStream)
     # show different results depending on whether or not the file info is stored
     # and whether or not we have reached EOF on the input stream
-    print(io, "Zip stream data read")
-    if !eof(za.source)
-        print(io, " so far")
+    print(io, "Zip stream data after ", position(za), " bytes")
+    if eof(za)
+        print(io, " (EOF)")
     end
-    print(io, ": ", position(za.source), " bytes, ")
-    if !za.store_file_info
-        print(io, "not storing file info, ")
-    else
-        print(io, "number of entries")
-        if !eof(za.source)
-            print(io, " so far")
-        end
+    if za.store_file_info
+        print(io, ", number of entries")
         print(io, ": ", length(za.directory), ", ")
     end
     if za.calculate_crc32s
-        print(io, "CRC-32 checksums calculated")
+        print(io, ", CRC-32 checksums calculated")
     else
-        print(io, "CRC-32 checksums not calculated")
+        print(io, ", CRC-32 checksums not calculated")
     end
     if za.store_file_info && length(za.directory) > 0
         println(io)
@@ -142,9 +149,6 @@ function Base.show(io::IO, za::ZipArchiveInputStream)
             total_c += entry.compressed_size
         end
         print(io, length(za.directory), " files")
-        if !eof(za.source)
-            print(io, " so far")
-        end
         if total_uc > 0
             @printf(io, ", %d bytes uncompressed, %d bytes compressed: %5.1f%%", total_uc, total_c, (total_uc - total_c) * 100 / total_uc)
         end
@@ -200,9 +204,9 @@ function zipstream(io::IO; store_file_info::Bool=false, calculate_crc32s::Bool=f
     # having to call position on the stream (which might not have a position!)
     if store_file_info
         stream = TranscodingStream(Noop(), io)
-        zs = ZipArchiveInputStream(stream, store_file_info, calculate_crc32s, ZipFileInformation[])
+        zs = ZipArchiveInputStream(stream, store_file_info, calculate_crc32s, ZipFileInformation[], 0)
     else
-        zs = ZipArchiveInputStream(io, store_file_info, calculate_crc32s, ZipFileInformation[])
+        zs = ZipArchiveInputStream(io, store_file_info, calculate_crc32s, ZipFileInformation[], 0)
     end
     finalizer(close, zs)
     return zs
@@ -215,6 +219,31 @@ open(f::F, x; kwargs...) where {F<:Function} = zipstream(x; kwargs...) |> f
 
 Base.eof(zs::ZipArchiveInputStream) = eof(zs.source)
 Base.close(zs::ZipArchiveInputStream) = close(zs.source)
+
+function Base.read(zs::ZipArchiveInputStream, ::Type{UInt8})
+    x = read(zs.source)
+    zs._bytes_read += 1
+    return x
+end
+
+function Base.unsafe_read(zf::ZipFileInputStream, p::Ptr{UInt8}, nb::UInt64)
+    unsafe_read(zf.source, p, nb)
+    zs._bytes_read += nb
+    return
+end
+
+Base.position(zs::ZipArchiveInputStream) = zs._bytes_read
+function Base.skip(zs::ZipArchiveInputStream, n::Integer)
+    if n < 0
+        error("stream cannot skip backward")
+    end
+    skip(zs.source, n)
+    zs._bytes_read += n
+    return
+end
+function Base.seek(::ZipArchiveInputStream, ::Integer)
+    error("stream cannot seek")
+end
 
 """
     validate(zs)
@@ -248,17 +277,17 @@ function validate(zs::ZipArchiveInputStream)
         @error "Unable to validate files against Central Directory because `store_file_info` argument set to `false`"
         return
     end
-    @logmsg Logging.Debug+1 "Central directory for validation" zs.directory
+    @debug "Central directory for validation" zs.directory
     # Seek backward to and read the directory.
     _seek_to_directory_backward(zs.source)
     # Read off the directory contents and check what was found.
     ncd = 0
     for (i, lf_info) in enumerate(zs.directory)
-        @logmsg Logging.Debug+1 "Reading central directory element $i"
+        @debug "Reading central directory element $i"
         ncd += 1
         cd_info = read(zs.source, CentralDirectoryHeader)
         if cd_info.info != lf_info
-            @logmsg Logging.Debug+1 "central directory entry does not match local file header" i cd_info.info lf_info
+            @debug "central directory entry does not match local file header" i cd_info.info lf_info
             error("discrepancy detected in central directory entry $i")
         end
     end
@@ -270,20 +299,18 @@ end
 
 function Base.iterate(zs::ZipArchiveInputStream, state::Int=0)
     # skip everything at the start of the archive that is not a local file header.
-    readuntil(zs.source, htol(reinterpret(UInt8, [SIG_LOCAL_FILE])))
-    if eof(zs.source)
+    readuntil(zs, htol(reinterpret(UInt8, [SIG_LOCAL_FILE])))
+    if eof(zs)
         return nothing
     end
     
     # add the local file header to the directory
+    header = read(zs, LocalFileHeader)
     if zs.store_file_info
-        header = read(zs.source, LocalFileHeader; skip_signature=true, offset=TranscodingStreams.stats(zs.source).transcoded_in)
-        @logmsg Logging.Debug+1 "Adding header to central directory" header.info
+        @debug "Adding header to central directory" header.info
         push!(zs.directory, header.info)
-    else
-        header = read(zs.source, LocalFileHeader; skip_signature=true)
     end
-    zf = zipfile(header.info, zs.source; calculate_crc32=zs.calculate_crc32s)
+    zf = zipfile(header.info, zs; calculate_crc32=zs.calculate_crc32s)
     return (zf, state+1)
 end
 
