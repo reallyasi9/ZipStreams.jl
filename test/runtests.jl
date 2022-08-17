@@ -273,6 +273,105 @@ end
             end
         end
     end
+
+    @testset "CentralDirectoryHeader" begin
+        @testset "Empty archive" begin
+            open(EMPTY_FILE, "r") do f
+                skip(f, 4)
+                @test_throws ArgumentError read(f, ZipStreams.CentralDirectoryHeader)
+            end
+        end
+
+        @testset "Zipped zip" begin
+            open(EOCD_FILE, "r") do f
+                skip(f, 0x22c4)
+                @test read(f, ZipStreams.CentralDirectoryHeader).info == ZipStreams.ZipFileInformation(
+                    ZipStreams.COMPRESSION_STORE,
+                    8856,
+                    8856,
+                    DateTime(2020, 1, 16, 7, 54, 30),
+                    0x9105cddb,
+                    "TestA.xlsx",
+                    false,
+                    false,
+                    false,
+                )
+            end
+        end
+
+        @testset "Multifile zip" begin
+            open(INFOZIP_FILE, "r") do f
+                skip(f, 0x15c)
+                @test read(f, ZipStreams.CentralDirectoryHeader).info == ZipStreams.ZipFileInformation(
+                    ZipStreams.COMPRESSION_STORE,
+                    0,
+                    0,
+                    DateTime(2013, 7, 21, 18, 36, 32),
+                    0x00000000,
+                    "ziptest/",
+                    false,
+                    false,
+                    false,
+                )
+
+                skip(f, 4)
+                @test read(f, ZipStreams.CentralDirectoryHeader).info == ZipStreams.ZipFileInformation(
+                    ZipStreams.COMPRESSION_DEFLATE,
+                    60,
+                    11,
+                    DateTime(2013, 7, 21, 18, 36, 32),
+                    0x9925b55b,
+                    "ziptest/julia.txt",
+                    false,
+                    false,
+                    false,
+                )
+
+                skip(f, 4)
+                @test read(f, ZipStreams.CentralDirectoryHeader).info == ZipStreams.ZipFileInformation(
+                    ZipStreams.COMPRESSION_STORE,
+                    30,
+                    30,
+                    DateTime(2013, 7, 21, 18, 29, 58),
+                    0xcb652a62,
+                    "ziptest/info.txt",
+                    false,
+                    false,
+                    false,
+                )
+
+                skip(f, 4)
+                @test read(f, ZipStreams.CentralDirectoryHeader).info == ZipStreams.ZipFileInformation(
+                    ZipStreams.COMPRESSION_STORE,
+                    13,
+                    13,
+                    DateTime(2013, 7, 21, 18, 27, 42),
+                    0x01d7afb4,
+                    "ziptest/hello.txt",
+                    false,
+                    false,
+                    false,
+                )
+            end
+        end
+
+        @testset "Zip64" begin
+            open(ZIP64_EXTRA_FILE, "r") do f
+                skip(f, 0x50)
+                @test read(f, ZipStreams.CentralDirectoryHeader).info == ZipStreams.ZipFileInformation(
+                    ZipStreams.COMPRESSION_STORE,
+                    15,
+                    15,
+                    DateTime(2022, 7, 30, 9, 50, 00),
+                    0x7505c420,
+                    "-",
+                    false,
+                    false,
+                    false, # the central directory doesn't know?
+                )
+            end
+        end
+    end
 end
 
 # function findfile(dir, name)

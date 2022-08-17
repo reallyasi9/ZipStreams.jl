@@ -67,10 +67,10 @@ function validate(zf::ZipFileInputStream)
     end
 end
 
-Base.read(zf::ZipFileInputStream, ::Type{T}) where T = read(zf.source, T)
+Base.read(zf::ZipFileInputStream, ::Type{UInt8}) = read(zf.source, UInt8)
 Base.unsafe_read(zf::ZipFileInputStream, p::Ptr{UInt8}, nb::UInt64) = unsafe_read(zf.source, p, nb)
 Base.eof(zf::ZipFileInputStream) = eof(zf.source)
-function Base.seek(zf::ZipFileInputStream, n::Integer)
+function Base.seek(::ZipFileInputStream, ::Integer)
     error("stream cannot seek")
 end
 function Base.skip(zf::ZipFileInputStream, n::Integer)
@@ -228,7 +228,7 @@ function Base.read(zs::ZipArchiveInputStream, ::Type{UInt8})
     return x
 end
 
-function Base.unsafe_read(zf::ZipFileInputStream, p::Ptr{UInt8}, nb::UInt64)
+function Base.unsafe_read(zf::ZipArchiveInputStream, p::Ptr{UInt8}, nb::UInt64)
     unsafe_read(zf.source, p, nb)
     zs._bytes_read += nb
     return

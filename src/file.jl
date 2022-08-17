@@ -221,6 +221,82 @@ function Base.read(io::IO, ::Type{LocalFileHeader})
 
 end
 
+function Base.write(io::IO, header::LocalFileHeader; zip64::Union{Bool,Nothing}=nothing, utf8::Union{Bool,Nothing}=nothing)
+    nb = 0
+    # signature: 4 bytes
+    nb += writele(io, SIG_LOCAL_FILE)
+
+    # version required to extract: 2 bytes
+    dozip64 = (zip64 == true) || header.info.zip64
+    if zip64 == false && (
+        header.info.compressed_size >= typemax(UInt32) ||
+        header.info.uncompressed_size >= typemax(UInt32)
+    )
+        error("file size too large for a standard Zip archive: uncompressed $(header.info.uncompressed_size), compressed $(header.info.compressed_size)")
+    end
+    if dozip64
+        nb += writele(io, ZIP64_MINIMUM_VERSION)
+    else
+        nb += writele(io, DEFLATE_OR_FOLDER_MINIMUM_VERSION)
+    end
+
+    # general purpose flags: 2 bytes
+    flags = UInt16(0)
+    doutf8 = (utf8 == true) || header.info.utf8
+    if doutf8
+        flags |= FLAG_LANGUAGE_ENCODING
+    end
+    nb += writele(io, flags)
+
+    # compression method: 2 bytes
+    nb += writele(io, header.info.compression_method)
+
+    # mod time: 2 bytes
+    # mod date: 2 bytes
+    (moddate, modtime) = datetime2msdos(header.info.last_modified)
+    nb += writele(io, modtime)
+    nb += writele(io, moddate)
+
+    # crc-32: 4 bytes
+    nb += writele(io, header.info.crc32)
+
+    # compressed size: 4 bytes (maybe)
+    # uncompressed size: 4 bytes (maybe)
+    if dozip64
+        nb += writele(io, typemax(UInt32))
+        nb += writele(io, typemax(UInt32))
+    else
+        nb += writele(io, header.info.compressed_size % UInt32)
+        nb += writele(io, header.info.uncompressed_size % UInt32)
+    end
+
+    # file name length: 2 bytes
+    encoding = doutf8 ? enc"UTF-8" : enc"IBM437"
+    filename_encoded = encode(header.info.name, encoding)
+    nb += writele(io, length(filename_encoded) % UInt16)
+
+    # extra field length: 2 bytes
+    extra_length = dozip64 ? 20 : 0
+    nb += writele(io, extra_length % UInt16)
+
+    # file name: variable
+    nb += writele(io, filename_encoded)
+
+    # extra field: variable
+    if dozip64
+        # header: 2 bytes
+        nb += writele(io, HEADER_ZIP64)
+        # remaining length: 2 bytes
+        nb += writele(io, 16 % UInt16)
+        # original size: 8 bytes
+        nb += writele(io, header.info.uncompressed_size)
+        # compressed size: 8 bytes
+        nb += writele(io, header.info.compressed_size)
+    end
+
+    return nb
+end
+
 """
     CentralDirectoryHeader
 
@@ -369,7 +445,6 @@ function Base.read(io::IO, ::Type{CentralDirectoryHeader})
         last_modified,
         crc32,
         filename,
-        comment,
         descriptor_follows,
         utf8,
         zip64,
@@ -377,106 +452,26 @@ function Base.read(io::IO, ::Type{CentralDirectoryHeader})
     return CentralDirectoryHeader(info, offset, comment)
 end
 
-function Base.write(io::IO, header::LocalFileHeader)
-    nb = 0
-    # signature: 4 bytes
-    nb += writele(io, SIG_LOCAL_FILE)
 
-    # version required to extract: 2 bytes
-    zip64 = header.info.zip64
-    if !zip64 && (
-        header.info.compressed_size > typemax(UInt32) ||
-        header.info.uncompressed_size >= typemax(UInt32)
-    )
-        @warn "File size too large for a standard Zip archive: using Zip64 instead" uncompressed_size =
-            header.info.uncompressed_size compressed_size = header.info.compressed_size
-        zip64 = true
-    end
-    if zip64
-        nb += writele(io, ZIP64_MINIMUM_VERSION)
-    else
-        nb += writele(io, DEFLATE_OR_FOLDER_MINIMUM_VERSION)
-    end
 
-    # general purpose flags: 2 bytes
-    flags = UInt16(0)
-    if header.info.descriptor_follows
-        flags |= FLAG_HEADER_MASKED
-    end
-    if header.info.utf8
-        flags |= FLAG_LANGUAGE_ENCODING
-    end
-    nb += writele(io, flags)
-
-    # compression method: 2 bytes
-    nb += writele(io, header.info.compression_method)
-
-    # mod time: 2 bytes
-    # mod date: 2 bytes
-    (moddate, modtime) = datetime2msdos(header.info.last_modified)
-    nb += writele(io, modtime)
-    nb += writele(io, moddate)
-
-    # crc-32: 4 bytes
-    nb += writele(io, header.info.crc32)
-
-    # compressed size: 4 bytes (maybe)
-    # uncompressed size: 4 bytes (maybe)
-    if zip64
-        nb += writele(io, typemax(UInt32))
-        nb += writele(io, typemax(UInt32))
-    else
-        nb += writele(io, header.info.compressed_size % UInt32)
-        nb += writele(io, header.info.uncompressed_size % UInt32)
-    end
-
-    # file name length: 2 bytes
-    encoding = header.info.utf8 ? enc"UTF-8" : enc"IBM437"
-    filename_encoded = encode(header.info.name, encoding)
-    nb += writele(io, UInt16(length(filename_encoded)))
-
-    # extra field length: 2 bytes
-    extra_length = zip64 ? 20 : 0
-    nb += writele(io, UInt16(extra_length))
-
-    # file name: variable
-    nb += writele(io, filename_encoded)
-
-    # extra field: variable
-    if zip64
-        # header: 2 bytes
-        nb += writele(io, HEADER_ZIP64)
-        # remaining length: 2 bytes
-        nb += writele(io, UInt16(16))
-        # original size: 8 bytes
-        nb += writele(io, header.info.uncompressed_size)
-        # compressed size: 8 bytes
-        nb += writele(io, header.info.compressed_size)
-    end
-
-    return nb
-end
-
-function Base.write(io::IO, header::CentralDirectoryHeader)
+function Base.write(io::IO, header::CentralDirectoryHeader; zip64::Union{Bool,Nothing}=nothing, utf8::Union{Bool,Nothing}=nothing)
     nb = 0
     # signature: 4 bytes
     nb += writele(io, SIG_CENTRAL_DIRECTORY)
 
-    # version created by: 2 bytes
+    # version made by: 2 byted
     nb += writele(io, ZIP64_MINIMUM_VERSION)
 
     # version required to extract: 2 bytes
-    zip64 = header.info.zip64
-    if !zip64 && (
-        header.info.compressed_size > typemax(UInt32) ||
-        header.info.uncompressed_size >= typemax(UInt32)
-    ) || header.info.offset >= typemax(UInt32)
-        @warn "File size or offset too large for a standard Zip archive: using Zip64 instead" uncompressed_size =
-            header.info.uncompressed_size compressed_size = header.info.compressed_size offset =
-            header.info.offset
-        zip64 = true
+    dozip64 = (zip64 == true) || header.info.zip64
+    if zip64 == false && (
+        header.info.compressed_size >= typemax(UInt32) ||
+        header.info.uncompressed_size >= typemax(UInt32) ||
+        header.offset >= typemax(UInt32)
+    )
+        error("file size too large for a standard Zip archive: uncompressed $(header.info.uncompressed_size), compressed $(header.info.compressed_size), offset $(header.offset)")
     end
-    if zip64
+    if dozip64
         nb += writele(io, ZIP64_MINIMUM_VERSION)
     else
         nb += writele(io, DEFLATE_OR_FOLDER_MINIMUM_VERSION)
@@ -484,10 +479,8 @@ function Base.write(io::IO, header::CentralDirectoryHeader)
 
     # general purpose flags: 2 bytes
     flags = UInt16(0)
-    if header.info.descriptor_follows
-        flags |= FLAG_HEADER_MASKED
-    end
-    if header.info.utf8
+    doutf8 = (utf8 == true) || header.info.utf8
+    if doutf8
         flags |= FLAG_LANGUAGE_ENCODING
     end
     nb += writele(io, flags)
@@ -506,7 +499,7 @@ function Base.write(io::IO, header::CentralDirectoryHeader)
 
     # compressed size: 4 bytes (maybe)
     # uncompressed size: 4 bytes (maybe)
-    if zip64
+    if dozip64
         nb += writele(io, typemax(UInt32))
         nb += writele(io, typemax(UInt32))
     else
@@ -515,39 +508,36 @@ function Base.write(io::IO, header::CentralDirectoryHeader)
     end
 
     # file name length: 2 bytes
-    encoding = header.info.utf8 ? enc"UTF-8" : enc"IBM437"
+    encoding = doutf8 ? enc"UTF-8" : enc"IBM437"
     filename_encoded = encode(header.info.name, encoding)
-    nb += writele(io, UInt16(length(filename_encoded)))
+    nb += writele(io, length(filename_encoded) % UInt16)
 
     # extra field length: 2 bytes
-    extra_length = zip64 ? 20 : 0
-    nb += writele(io, UInt16(extra_length))
+    extra_length = dozip64 ? 20 : 0
+    nb += writele(io, extra_length % UInt16)
 
     # comment length: 2 bytes
     comment_encoded = encode(header.comment, encoding)
-    nb += writele(io, UInt16(length(comment_encoded)))
+    nb += writele(io, length(comment_encoded) % UInt16)
 
-    # disk number start: 2 bytes
-    nb += writele(io, UInt16(0))
+    # disk number where file starts: 2 bytes
+    nb += writele(io, 0 % UInt16)
 
     # internal file attributes: 2 bytes
-    nb += writele(io, UInt16(0))
-
     # external file attributes: 4 bytes
-    nb += writele(io, UInt32(0))
 
-    # offset of local header: 4 bytes
-    if zip64
-        nb += writele(io, typemax(UInt32))
-    else
+    # offset of header: 4 bytes
+    if dozip64
         nb += writele(io, header.offset % UInt32)
+    else
+        nb += writele(io, typemax(UInt32))
     end
 
     # file name: variable
     nb += writele(io, filename_encoded)
 
     # extra field: variable
-    if zip64
+    if dozip64
         # header: 2 bytes
         nb += writele(io, HEADER_ZIP64)
         # remaining length: 2 bytes
@@ -557,11 +547,11 @@ function Base.write(io::IO, header::CentralDirectoryHeader)
         # compressed size: 8 bytes
         nb += writele(io, header.info.compressed_size)
         # offset: 8 bytes
-        nb += writele(io, header.info.offset)
+        nb += writele(io, header.offset)
     end
 
-    # file comment: variable
-    nb += write(io, comment_encoded)
+    # comment: variable
+    nb += writele(io, comment_encoded)
 
     return nb
 end
@@ -569,15 +559,15 @@ end
 function _write_zip64_eocd_record(io::IO, entries::UInt64, nbytes::UInt64, offset::UInt64)
     nb = writele(io, SIG_ZIP64_END_OF_CENTRAL_DIRECTORY)
     # remaining bytes in header: 8 bytes
-    nb += writele(io, UInt64(44))
+    nb += writele(io, 44 % UInt64)
     # version made by: 2 bytes
     nb += writele(io, ZIP64_MINIMUM_VERSION)
     # version needed: 2 bytes
     nb += writele(io, ZIP64_MINIMUM_VERSION)
     # number of this disk: 4 bytes
-    nb += writele(io, UInt32(0))
+    nb += writele(io, 0 % UInt32)
     # number of disk with central directory: 4 bytes
-    nb += writele(io, UInt32(0))
+    nb += writele(io, 0 % UInt32)
     # total entries in central directory: 8 bytes
     nb += writele(io, entries)
     # size of central directory: 8 bytes
@@ -592,11 +582,11 @@ end
 function _write_zip64_eocd_locator(io::IO, offset::UInt64)
     nb = writele(io, SIG_ZIP64_CENTRAL_DIRECTORY_LOCATOR)
     # number of disk with Zip64 EoCD: 4 bytes
-    nb += writele(io, UInt32(0))
+    nb += writele(io, 0 % UInt32)
     # offset of Zip64 EoCD: 8 bytes
     nb += writele(io, offset)
     # total number of disks: 4 bytes
-    nb += writele(io, UInt32(1)) # might get me in trouble...
+    nb += writele(io, 1 % UInt32) # might get me in trouble...
 
     return nb
 end
@@ -610,9 +600,9 @@ function _write_eocd_record(
 )
     nb = writele(io, SIG_END_OF_CENTRAL_DIRECTORY)
     # number of this disk: 2 bytes
-    nb += writele(io, UInt16(0))
+    nb += writele(io, 0 % UInt16)
     # number of disk with start of CD: 2 bytes
-    nb += writele(io, UInt16(0))
+    nb += writele(io, 0 % UInt16)
     # total entries in the CD on this disk: 2 bytes
     nb += writele(io, entries)
     # total entries in the CD: 2 bytes
@@ -622,104 +612,41 @@ function _write_eocd_record(
     # offset to CD: 4 bytes
     nb += writele(io, offset)
 
-    # NOTE: file comments must only be IBM437. No UTF-8 capabilities in the EoCD.
+    # NOTE: archive comments must only be IBM437. No UTF-8 capabilities in the EoCD.
     comment_encoded = encode(comment, enc"IBM437")
     # comment length: 2 bytes
-    nb += writele(io, UInt16(length(comment_encoded)))
+    nb += writele(io, length(comment_encoded) % UInt16)
     # comment: variable
     nb += write(io, comment_encoded)
 
     return nb
 end
 
-"""
-    seek_to_directory(io)
-
-Seek `io` to the first Central Directory record.
-
-If `io` does not have the ability to seek, bytes will be read from `io` using
-`read(io)` until the first CD record is found. If seekable, `io` will start at the
-end and read backward, which might be more efficient for large files.
-"""
-function seek_to_directory(io::IO)
-    try
-        _seek_to_directory_backward(io)
-    catch
-        _seek_to_directory_forward(io)
+function write_directory(io::IO, directory::AbstractVector{CentralDirectoryHeader}; startpos::Union{Integer,Nothing}=nothing, comment::AbstractString="", zip64::Union{Bool,Nothing}=nothing, utf8::Union{Bool,Nothing}=nothing)
+    # write the Central Directory headers
+    beg = isnothing(startpos) ? position(io) % UInt64 : startpos % UInt64
+    nb = 0
+    dozip64 = false
+    for header in directory
+        nb += write(io, header; zip64=zip64, utf8=utf8)
+        dozip64 |= header.info.zip64 || (zip64 == true)
     end
-end
+    
+    pos = beg + nb
 
-# Seeks backward until it finds the directory signature.
-# If it detects that Zip64 is needed, it seeks backward again to read the propper
-# start of the central directory.
-# If it finds the end of central directory record the first time and does not
-# detect a Zip64 record, this will seek backward as few as 2 times.
-function _seek_to_directory_backward(io::IO)
-    # with no comment, the EoCD record will be the last 22 bytes. Try that first.
-    seekend(io)
-    skip(io, -22)
-    if readle(io, UInt32) == SIG_END_OF_CENTRAL_DIRECTORY
-        # skip back 4 and call it a day!
-        skip(io, -4)
+    # write the EoCD, using Zip64 standard as necessary
+    n_entries = length(directory) % UInt64
+    dozip64 |= (nb >= typemax(UInt32) || beg >= typemax(UInt32) || pos >= typemax(UInt32) || n_entries >= typemax(UInt16))
+    if dozip64 && zip64 == false
+        error("header too large for standard Zip: length $(nb), beg $(beg), endpos $(pos), entries $(n_entries)")
+    end
+    if dozip64
+        nb += _write_zip64_eocd_record(io, n_entries, nb % UInt64, beg % UInt64)
+        nb += _write_zip64_eocd_locator(io, pos % UInt64)
+        nb += _write_eocd_record(io, typemax(UInt16), typemax(UInt32), typemax(UInt32), comment)
     else
-        # All Zip archives are written in LE format.
-        sig = reinterpret(UInt8, [htol(SIG_END_OF_CENTRAL_DIRECTORY)])
-        try
-            seek_backward_to(io, sig)
-        catch e
-            # No record: seek to the end and return
-            @error "Error seeking backward to end of central directory" exception =
-                (last(current_exceptions()).exception, last(current_exceptions()).backtrace)
-            seekend(io)
-            return
-        end
-        if eof(io)
-            # No record: we're done
-            @error "No end of central directory record found"
-            return
-        end
+        nb += _write_eocd_record(io, n_entries % UInt16, nb % UInt32, beg % UInt32, comment)
     end
 
-    mark(io)
-    skip(io, 16) # move to offset
-    start_of_cd = UInt64(readle(io, UInt32))
-    # Check if Zip64 record not necessary
-    if start_of_cd != typemax(UInt32)
-        seek(io, start_of_cd)
-        unmark(io)
-        return
-    end
-
-    # Zip64 required
-    reset(io)
-    skip(io, -20) # beginning of zip64 EoCD locator
-    sig = readle(io, UInt32)
-    if sig != SIG_ZIP64_CENTRAL_DIRECTORY_LOCATOR
-        error(
-            "Zip64 end of central directory locator required: expected signature $(SIG_ZIP64_CENTRAL_DIRECTORY_LOCATOR) at position $(position(io)-sizeof(SIG_ZIP64_CENTRAL_DIRECTORY_LOCATOR)), got $(sig)",
-        )
-    end
-    skip(io, 4) # skip disk number
-    offset = readle(io, UInt64) # beginning of zip64 EoCD
-
-    seek(io, offset)
-    sig = readle(io, UInt32)
-    if sig != SIG_ZIP64_END_OF_CENTRAL_DIRECTORY
-        error(
-            "Zip64 end of central directory required: expected signature $(SIG_ZIP64_END_OF_CENTRAL_DIRECTORY) at position $(position(io)-sizeof(SIG_ZIP64_END_OF_CENTRAL_DIRECTORY)), got $(sig)",
-        )
-    end
-    skip(io, 42) # skip to offset
-    start_of_cd = readle(io, UInt64)
-    seek(io, start_of_cd)
-    return
+    return nb
 end
-
-function _seek_to_directory_forward(io::IO)
-    # Just seek until the signature is found. Too easy!
-    # Just remember that this also consumes the bytes of the header, so move back!
-    sentinel = reinterpret(UInt8, [htol(SIG_CENTRAL_DIRECTORY)])
-    readuntil(io, sentinel)
-    return
-end
-
