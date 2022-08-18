@@ -513,7 +513,7 @@ function Base.write(io::IO, header::CentralDirectoryHeader; zip64::Union{Bool,No
     nb += writele(io, length(filename_encoded) % UInt16)
 
     # extra field length: 2 bytes
-    extra_length = dozip64 ? 20 : 0
+    extra_length = dozip64 ? 28 : 0
     nb += writele(io, extra_length % UInt16)
 
     # comment length: 2 bytes
@@ -525,12 +525,15 @@ function Base.write(io::IO, header::CentralDirectoryHeader; zip64::Union{Bool,No
 
     # internal file attributes: 2 bytes
     # external file attributes: 4 bytes
+    # TODO
+    nb += writele(io, 0 % UInt16)
+    nb += writele(io, 0 % UInt32)
 
     # offset of header: 4 bytes
     if dozip64
-        nb += writele(io, header.offset % UInt32)
-    else
         nb += writele(io, typemax(UInt32))
+    else
+        nb += writele(io, header.offset % UInt32)
     end
 
     # file name: variable
@@ -568,6 +571,8 @@ function _write_zip64_eocd_record(io::IO, entries::UInt64, nbytes::UInt64, offse
     nb += writele(io, 0 % UInt32)
     # number of disk with central directory: 4 bytes
     nb += writele(io, 0 % UInt32)
+    # total entries in central directory on this disk: 8 bytes
+    nb += writele(io, entries)
     # total entries in central directory: 8 bytes
     nb += writele(io, entries)
     # size of central directory: 8 bytes

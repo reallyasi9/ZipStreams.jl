@@ -1,4 +1,4 @@
-import Base: HasEltype, IteratorEltype, IteratorSize, SizeUnknown, close, eltype, eof, iterate, isreadable, iswritable, position, read, seek, show, skip, unsafe_read
+import Base: HasEltype, IteratorEltype, IteratorSize, SizeUnknown, bytesavailable, close, eltype, eof, iterate, isopen, isreadable, iswritable, position, read, seek, show, skip, unsafe_read
 using Logging
 using Printf
 using TranscodingStreams
@@ -206,31 +206,33 @@ function zipstream(io::IO; store_file_info::Bool=false, calculate_crc32s::Bool=f
     # having to call position on the stream (which might not have a position!)
     if store_file_info
         stream = TranscodingStream(Noop(), io)
-        zs = ZipArchiveInputStream(stream, store_file_info, calculate_crc32s, ZipFileInformation[], 0)
+        zs = ZipArchiveInputStream(stream, store_file_info, calculate_crc32s, ZipFileInformation[], 0 % UInt64)
     else
-        zs = ZipArchiveInputStream(io, store_file_info, calculate_crc32s, ZipFileInformation[], 0)
+        zs = ZipArchiveInputStream(io, store_file_info, calculate_crc32s, ZipFileInformation[], 0 % UInt64)
     end
     finalizer(close, zs)
     return zs
 end
-zipstream(fname::AbstractString; kwargs...) = zipstream(open(fname, "r"); kwargs...)
+zipstream(fname::AbstractString; kwargs...) = zipstream(Base.open(fname, "r"); kwargs...)
 zipstream(f::F, x; kwargs...) where {F<:Function} = zipstream(x; kwargs...) |> f
 
 open(fname::AbstractString; kwargs...) = zipstream(fname; kwargs...)
 open(f::F, x; kwargs...) where {F<:Function} = zipstream(x; kwargs...) |> f
 
 Base.eof(zs::ZipArchiveInputStream) = eof(zs.source)
+Base.isopen(zs::ZipArchiveInputStream) = isopen(zs.source)
+Base.bytesavailable(zs::ZipArchiveInputStream) = bytesavailable(zs.source)
 Base.close(zs::ZipArchiveInputStream) = close(zs.source)
 
 function Base.read(zs::ZipArchiveInputStream, ::Type{UInt8})
-    x = read(zs.source)
+    x = read(zs.source, UInt8)
     zs._bytes_read += 1
     return x
 end
 
 function Base.unsafe_read(zf::ZipArchiveInputStream, p::Ptr{UInt8}, nb::UInt64)
     unsafe_read(zf.source, p, nb)
-    zs._bytes_read += nb
+    zf._bytes_read += nb
     return
 end
 
@@ -303,8 +305,9 @@ end
 
 function Base.iterate(zs::ZipArchiveInputStream, state::Int=0)
     # skip everything at the start of the archive that is not the next signature.
+    sentinel = htol(reinterpret(UInt8, [SIG_L]))
     while true
-        readuntil(zs, htol(reinterpret(UInt8, [SIG_L])))
+        readuntil(zs, sentinel)
         if eof(zs)
             return nothing
         end
