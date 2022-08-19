@@ -136,7 +136,7 @@ function Base.show(io::IO, za::ZipArchiveInputStream)
     end
     if za.store_file_info
         print(io, ", number of entries")
-        print(io, ": ", length(za.directory), ", ")
+        print(io, ": ", length(za.directory))
     end
     if za.calculate_crc32s
         print(io, ", CRC-32 checksums calculated")
@@ -152,7 +152,10 @@ function Base.show(io::IO, za::ZipArchiveInputStream)
             total_uc += entry.uncompressed_size
             total_c += entry.compressed_size
         end
-        print(io, length(za.directory), " files")
+        print(io, length(za.directory), " file")
+        if length(za.directory) != 1
+            print(io, "s")
+        end
         if total_uc > 0
             @printf(io, ", %d bytes uncompressed, %d bytes compressed: %5.1f%%", total_uc, total_c, (total_uc - total_c) * 100 / total_uc)
         end
@@ -303,6 +306,11 @@ function validate(zs::ZipArchiveInputStream)
         @error "Central Directory had a different number of headers than detected in Local Files" n_local_files=length(zs.directory) n_central_directory=ncd
         error("discrepancy detected in number of central directory entries ($ncd vs $(length(zs.directory)))")
     end
+    @debug "Zip archive Central Directory valid"
+    # TODO: validate EOCD record(s)
+    # Until then, just read to EOF?
+    read(zs)
+    return
 end
 
 function Base.iterate(zs::ZipArchiveInputStream, state::Int=0)
