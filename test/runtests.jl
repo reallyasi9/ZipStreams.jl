@@ -1,5 +1,7 @@
 using Dates
 using Test
+using TranscodingStreams
+using CodecZlib
 using ZipStreams
 using Random
 
@@ -8,7 +10,6 @@ const EOCD_FILE = joinpath(dirname(@__FILE__), "EOCD.zip")
 const INFOZIP_FILE = joinpath(dirname(@__FILE__), "infozip.zip")
 const ZIP64_FILE = joinpath(dirname(@__FILE__), "zip64.zip")
 const ZIP64_2_FILE = joinpath(dirname(@__FILE__), "zip64-2.zip")
-const ZIP64_EXTRA_FILE = joinpath(dirname(@__FILE__), "zip64-extra.zip")
 
 @test Any[] == detect_ambiguities(Base, Core, ZipStreams)
 
@@ -174,7 +175,7 @@ end
     end
 end
 
-@testset "ZipStream" begin
+@testset "File components" begin
     @testset "LocalFileHeader" begin
         @testset "Empty archive" begin
             open(EMPTY_FILE, "r") do f
@@ -257,18 +258,18 @@ end
         end
 
         @testset "Zip64" begin
-            open(ZIP64_EXTRA_FILE, "r") do f
+            open(ZIP64_FILE, "r") do f
                 skip(f, 4)
                 @test read(f, ZipStreams.LocalFileHeader).info == ZipStreams.ZipFileInformation(
-                    ZipStreams.COMPRESSION_STORE,
-                    15,
-                    15,
-                    DateTime(2022, 7, 30, 9, 50, 00),
-                    0x7505c420,
-                    "-",
+                    ZipStreams.COMPRESSION_DEFLATE,
+                    36,
+                    36,
+                    DateTime(2012, 8, 10, 14, 33, 32),
+                    0x69ffe77e,
+                    "README",
                     false,
                     false,
-                    true,
+                    false, # central directory is in Zip64 format, not the local file header
                 )
             end
         end
@@ -356,18 +357,18 @@ end
         end
 
         @testset "Zip64" begin
-            open(ZIP64_EXTRA_FILE, "r") do f
-                skip(f, 0x50)
+            open(ZIP64_FILE, "r") do f
+                skip(f, 76)
                 @test read(f, ZipStreams.CentralDirectoryHeader).info == ZipStreams.ZipFileInformation(
-                    ZipStreams.COMPRESSION_STORE,
-                    15,
-                    15,
-                    DateTime(2022, 7, 30, 9, 50, 00),
-                    0x7505c420,
-                    "-",
+                    ZipStreams.COMPRESSION_DEFLATE,
+                    36,
+                    36,
+                    DateTime(2012, 8, 10, 14, 33, 32),
+                    0x69ffe77e,
+                    "README",
                     false,
                     false,
-                    false, # the central directory doesn't know?
+                    true, # central directory is in Zip64 format, not the local file header
                 )
             end
         end

@@ -82,6 +82,8 @@ function Base.skip(zf::ZipFileInputStream, n::Integer)
 end
 Base.isreadable(::ZipFileInputStream) = true
 Base.iswritable(::ZipFileInputStream) = false
+Base.isopen(zf::ZipFileInputStream) = isopen(zf.source)
+Base.bytesavailable(zf::ZipFileInputStream) = bytesavailable(zf.source)
 
 """
     ZipArchiveInputStream
@@ -321,8 +323,9 @@ function Base.iterate(zs::ZipArchiveInputStream, state::Int=0)
     
     # add the local file header to the directory
     header = read(zs, LocalFileHeader)
+    @debug "Read local file header" header.info
     if zs.store_file_info
-        @debug "Adding header to central directory" header.info
+        @debug "Adding header to central directory"
         push!(zs.directory, header.info)
     end
     zf = zipfile(header.info, zs; calculate_crc32=zs.calculate_crc32s)

@@ -627,14 +627,14 @@ function _write_eocd_record(
     return nb
 end
 
-function write_directory(io::IO, directory::AbstractVector{CentralDirectoryHeader}; startpos::Union{Integer,Nothing}=nothing, comment::AbstractString="", zip64::Union{Bool,Nothing}=nothing, utf8::Union{Bool,Nothing}=nothing)
+function write_directory(io::IO, directory::AbstractVector{CentralDirectoryHeader}; startpos::Union{Integer,Nothing}=nothing, comment::AbstractString="", zip64::Union{Bool,Nothing}=nothing, utf8::Union{Bool,Nothing}=nothing, zip64_eocd::Union{Bool,Nothing}=nothing)
     # write the Central Directory headers
     beg = isnothing(startpos) ? position(io) % UInt64 : startpos % UInt64
     nb = 0
     dozip64 = false
     for header in directory
         nb += write(io, header; zip64=zip64, utf8=utf8)
-        dozip64 |= header.info.zip64 || (zip64 == true)
+        dozip64 |= header.info.zip64
     end
     
     pos = beg + nb
@@ -642,9 +642,11 @@ function write_directory(io::IO, directory::AbstractVector{CentralDirectoryHeade
     # write the EoCD, using Zip64 standard as necessary
     n_entries = length(directory) % UInt64
     dozip64 |= (nb >= typemax(UInt32) || beg >= typemax(UInt32) || pos >= typemax(UInt32) || n_entries >= typemax(UInt16))
-    if dozip64 && zip64 == false
-        error("header too large for standard Zip: length $(nb), beg $(beg), endpos $(pos), entries $(n_entries)")
+    if dozip64 && zip64_eocd == false
+        error("header requires Zip64 EOCD: length $(nb), beg $(beg), endpos $(pos), entries $(n_entries)")
     end
+    # override if forced
+    dozip64 |= (zip64_eocd == true)
     if dozip64
         nb += _write_zip64_eocd_record(io, n_entries, nb % UInt64, beg % UInt64)
         nb += _write_zip64_eocd_locator(io, pos % UInt64)
