@@ -18,7 +18,11 @@ mutable struct ZipFileInputStream{S<:IO} <: IO
 end
 
 function zipfile(info::ZipFileInformation, io::IO; calculate_crc32::Bool=true)
-    truncstream = TruncatedInputStream(io, info.compressed_size)
+    if info.descriptor_follows
+        truncstream = SentinelInputStream(io, reinterpret(UInt8, [htol(SIG_DATA_DESCRIPTOR)]))
+    else
+        truncstream = TruncatedInputStream(io, info.compressed_size)
+    end
     C = info.compression_method == COMPRESSION_DEFLATE ? CodecZlib.DeflateDecompressor : TranscodingStreams.Noop
     stream = TranscodingStream(C(), truncstream)
     if calculate_crc32
@@ -246,7 +250,8 @@ function Base.skip(zs::ZipArchiveInputStream, n::Integer)
     if n < 0
         error("stream cannot skip backward")
     end
-    skip(zs.source, n)
+    # read and drop on the floor
+    read(zs.source, n)
     zs._bytes_read += n
     return
 end
@@ -254,7 +259,7 @@ function Base.seek(::ZipArchiveInputStream, ::Integer)
     error("stream cannot seek")
 end
 
-Base.isreadable(::ZipArchiveInputStream) = true
+Base.isreadable(za::ZipArchiveInputStream) = isreadable(za.source)
 Base.iswritable(::ZipArchiveInputStream) = false
 
 """
