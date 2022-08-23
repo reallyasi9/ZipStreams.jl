@@ -627,7 +627,15 @@ function _write_eocd_record(
     return nb
 end
 
-function write_directory(io::IO, directory::AbstractVector{CentralDirectoryHeader}; startpos::Union{Integer,Nothing}=nothing, comment::AbstractString="", zip64::Union{Bool,Nothing}=nothing, utf8::Union{Bool,Nothing}=nothing, zip64_eocd::Union{Bool,Nothing}=nothing)
+function write_directory(
+    io::IO,
+    directory::AbstractVector{CentralDirectoryHeader};
+    startpos::Union{Integer,Nothing}=nothing,
+    comment::AbstractString="",
+    zip64::Union{Bool,Nothing}=nothing,
+    utf8::Union{Bool,Nothing}=nothing,
+    zip64_eocd::Union{Bool,Nothing}=nothing,
+)
     # write the Central Directory headers
     beg = isnothing(startpos) ? position(io) % UInt64 : startpos % UInt64
     nb = 0

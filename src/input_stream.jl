@@ -19,13 +19,17 @@ end
 
 function zipfile(info::ZipFileInformation, io::IO; calculate_crc32::Bool=true)
     if info.descriptor_follows
-        truncstream = SentinelInputStream(io, reinterpret(UInt8, [htol(SIG_DATA_DESCRIPTOR)]))
-    else
-        truncstream = TruncatedInputStream(io, info.compressed_size)
+        if info.compressed_size == 0
+            error("files using data descriptors cannot be streamed")
+        else
+            @warn "Data descriptor found in local file header, but size information present: extracted data may be corrupt" info.compressed_size
+        end
     end
+    truncstream = TruncatedInputStream(io, info.compressed_size)
     C = info.compression_method == COMPRESSION_DEFLATE ? CodecZlib.DeflateDecompressor : TranscodingStreams.Noop
     stream = TranscodingStream(C(), truncstream)
     if calculate_crc32
+        @debug "CRC-32 checksums being calculated"
         stream = CRC32InputStream(stream)
     end
     return ZipFileInputStream(info, stream)
@@ -39,36 +43,60 @@ end
     validate(zf)
 
 Validate that the contents read from an archived file match the information stored
-in the header.
+in the header and return the data read.
 
 When called, this method will read through the remainder of the archived file
 until EOF is reached.
 """
 function validate(zf::ZipFileInputStream{S}) where {S <: CRC32InputStream}
+    @debug "Calculating CRC32 checksum for validation"
     # read the remainder of the file
-    read(zf)
-    if zf.source.crc32 != zf.info.crc32
-        error("CRC32 check failed: expected $(zf.info.crc32), got $(zf.source.crc32)")
-    end
+    data = read(zf)
     stats = TranscodingStreams.stats(zf.source.source)
-    if stats.transcoded_in != zf.info.compressed_size
-        error("compressed size check failed: expected $(zf.info.compressed_size), got $(stats.transcoded_in)")
+    badcrc = zf.source.crc32 != zf.info.crc32
+    badcom = stats.transcoded_in != zf.info.compressed_size
+    badunc = stats.transcoded_out != zf.info.uncompressed_size
+
+    if badcrc
+        @error "CRC32 check failed: expected $(zf.info.crc32), got $(zf.source.crc32)"
     end
-    if stats.transcoded_out != zf.info.uncompressed_size
-        error("uncompressed size check failed: expected $(zf.info.uncompressed_size), got $(stats.transcoded_out)")
+    if badcom
+        @error "Compressed size check failed: expected $(zf.info.compressed_size), got $(stats.transcoded_in)"
     end
+    if badunc
+        @error "Uncompressed size check failed: expected $(zf.info.uncompressed_size), got $(stats.transcoded_out)"
+    end
+
+    if badcrc || badcom || badunc
+        error("validation failed")
+    else
+        @debug "validation succeeded"
+    end
+
+    return data
 end
 
 function validate(zf::ZipFileInputStream)
+    @debug "Not calculating CRC32 checksums for validation: using compressed and uncompressed sizes only"
     # read the remainder of the file
-    read(zf)
-    stats = TranscodingStreams.stats(zf.source)
-    if stats.transcoded_in != zf.info.compressed_size
-        error("compressed size check failed: expected $(zf.info.compressed_size), got $(stats.transcoded_in)")
+    data = read(zf)
+    stats = TranscodingStreams.stats(zf.source.source)
+    badcom = stats.transcoded_in != zf.info.compressed_size
+    badunc = stats.transcoded_out != zf.info.uncompressed_size
+
+    if badcom
+        @error "Compressed size check failed: expected $(zf.info.compressed_size), got $(stats.transcoded_in)"
     end
-    if stats.transcoded_out != zf.info.uncompressed_size
-        error("uncompressed size check failed: expected $(zf.info.uncompressed_size), got $(stats.transcoded_out)")
+    if badunc
+        @error "Uncompressed size check failed: expected $(zf.info.uncompressed_size), got $(stats.transcoded_out)"
     end
+
+    if badcom || badunc
+        error("validation failed")
+    else
+        @debug "validation succeeded"
+    end
+    return data
 end
 
 Base.read(zf::ZipFileInputStream, ::Type{UInt8}) = read(zf.source, UInt8)
@@ -213,12 +241,7 @@ manual calls to [`validate(::ZipArchiveInputStream)`](@ref)
 function zipstream(io::IO; store_file_info::Bool=false, calculate_crc32s::Bool=false)
     # If storing file information, use a Noop stream to catch the offsets without
     # having to call position on the stream (which might not have a position!)
-    if store_file_info
-        stream = TranscodingStream(Noop(), io)
-        zs = ZipArchiveInputStream(stream, store_file_info, calculate_crc32s, ZipFileInformation[], 0 % UInt64)
-    else
-        zs = ZipArchiveInputStream(io, store_file_info, calculate_crc32s, ZipFileInformation[], 0 % UInt64)
-    end
+    zs = ZipArchiveInputStream(io, store_file_info, calculate_crc32s, ZipFileInformation[], 0 % UInt64)
     finalizer(close, zs)
     return zs
 end
@@ -266,7 +289,7 @@ Base.iswritable(::ZipArchiveInputStream) = false
     validate(zs)
 
 Validate the files in the archive `zs` against the Central Directory at the end of
-the archive.
+the archive and return all data read as a vector of byte vectors (one per file).
 
 Consumes all the remaining data in the source stream of `zs` and throws an
 exception if the file information read does not match the information in the
@@ -286,14 +309,13 @@ See also [`validate(::ZipFileInputStream)`](@ref).
 """
 function validate(zs::ZipArchiveInputStream)
     # validate remaining files
-    for f in zs
-        validate(f)
-    end
+    filedata = validate.(zs)
+
     # Guaranteed to be after the last local header found,
     # maybe after the central directory?
     if !zs.store_file_info
         @error "Unable to validate files against Central Directory because `store_file_info` argument set to `false`"
-        return
+        return filedata
     end
     @debug "Central directory for validation" zs.directory
     # Read off the directory contents and check what was found.
@@ -315,7 +337,7 @@ function validate(zs::ZipArchiveInputStream)
     # TODO: validate EOCD record(s)
     # Until then, just read to EOF?
     read(zs)
-    return
+    return filedata
 end
 
 function Base.iterate(zs::ZipArchiveInputStream, state::Int=0)
