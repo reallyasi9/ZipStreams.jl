@@ -17,7 +17,7 @@ create a new one.
 
 # Examples
 """
-mutable struct ZipArchiveOutputStream{S<:IO}
+mutable struct ZipArchiveOutputStream{S<:IO} <: IO
     sink::S
     directory::Vector{CentralDirectoryHeader}
 
@@ -65,7 +65,7 @@ the Zip archive in any other way.
     Zip archives to write-only streams (e.g., network pipes).
 """
 function zipsink(fname::AbstractString, args...; kwargs...)
-    return zipsink(open(fname, "w"), args...; kwargs...)
+    return zipsink(Base.open(fname, "w"), args...; kwargs...)
 end
 
 function zipsink(
@@ -117,7 +117,7 @@ function Base.mkdir(ziparchive::ZipArchiveOutputStream, path::AbstractString; co
     push!(ziparchive.directory, central_directory_header)
     push!(ziparchive._folders_created, path)
     ziparchive._bytes_written += nb
-    return path
+    return nb
 end
 
 function Base.mkpath(ziparchive::ZipArchiveOutputStream, path::AbstractString; comment::AbstractString="")
@@ -133,7 +133,7 @@ function Base.mkpath(ziparchive::ZipArchiveOutputStream, path::AbstractString; c
         end
     end
     ziparchive._bytes_written += nb
-    return mkdir(ziparchive, path; comment=comment)
+    return nb + mkdir(ziparchive, path; comment=comment)
 end
 
 function Base.write(za::ZipArchiveOutputStream, value::UInt8)
@@ -143,9 +143,9 @@ function Base.write(za::ZipArchiveOutputStream, value::UInt8)
 end
 
 function Base.unsafe_write(za::ZipArchiveOutputStream, x::Ptr{UInt8}, n::UInt)
-    unsafe_write(za.sink, x, n)
-    za._bytes_written += n
-    return
+    nb = unsafe_write(za.sink, x, n)
+    za._bytes_written += nb
+    return nb
 end
 
 Base.position(za::ZipArchiveOutputStream) = za._bytes_written
@@ -226,8 +226,8 @@ function Base.open(
         info,
         comment,
         offset,
-        0 % UInt64,
         archive,
+        0 % UInt64,
         false,
     )
 
@@ -272,7 +272,7 @@ function Base.close(zipfile::ZipFileOutputStream)
         zipfile.info.utf8,
         zip64, # force Zip64 format if necessary
     )
-    push!(zipfile.parent.directory, CentralDirectoryHeader(directory_info, zipfile.offset, zipfile.comment))
+    push!(zipfile._raw_sink.directory, CentralDirectoryHeader(directory_info, zipfile.offset, zipfile.comment))
 
     zipfile._closed = true
     return
@@ -291,9 +291,9 @@ function Base.unsafe_write(zf::ZipFileOutputStream, p::Ptr{UInt8}, n::UInt)
     if zf._closed
         throw(EOFError())
     end
-    unsafe_write(zf.sink, p, n)
-    zf._bytes_written += n
-    return
+    nb = unsafe_write(zf.sink, p, n)
+    zf._bytes_written += nb
+    return nb
 end
 
 Base.position(zf::ZipFileOutputStream) = zf._bytes_written

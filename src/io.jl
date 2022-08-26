@@ -11,7 +11,7 @@ readle(io::IO, ::Type{T}) where {T} = ltoh(read(io, T))
 """
     writele(io, ...)
 
-Write a value to `io` in little-endian format.
+Write a value to `io` in little-endian format. Return the number of bytes written.
 """
 writele(io::IO, value::T) where {T} = write(io, htol(value))
 

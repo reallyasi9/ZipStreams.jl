@@ -56,9 +56,9 @@ Base.isreadable(s::CRC32OutputStream) = false
 Base.iswritable(s::CRC32OutputStream) = iswritable(s.sink)
 
 function Base.unsafe_write(s::CRC32OutputStream, p::Ptr{UInt8}, nb::UInt)
-    unsafe_write(s.sink, p, nb)
-    s.crc32 = crc32(p, nb, s.crc32)
-    return
+    n = unsafe_write(s.sink, p, nb)
+    s.crc32 = crc32(p, n, s.crc32)
+    return n
 end
 
 function Base.write(s::CRC32OutputStream, x)

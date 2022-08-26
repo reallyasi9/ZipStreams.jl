@@ -222,9 +222,9 @@ function Base.read(io::IO, ::Type{LocalFileHeader})
 end
 
 function Base.write(io::IO, header::LocalFileHeader; zip64::Union{Bool,Nothing}=nothing, utf8::Union{Bool,Nothing}=nothing)
-    nb = 0
+
     # signature: 4 bytes
-    nb += writele(io, SIG_LOCAL_FILE)
+    nb = writele(io, SIG_LOCAL_FILE)
 
     # version required to extract: 2 bytes
     dozip64 = (zip64 == true) || header.info.zip64
