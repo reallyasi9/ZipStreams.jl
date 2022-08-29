@@ -65,6 +65,16 @@ const COMPRESSION_WAVPACK = UInt16(97) # Forbidden by ISO/IEC 21320-1
 const COMPRESSION_PPMD = UInt16(98) # Forbidden by ISO/IEC 21320-1
 const COMPRESSION_AEX = UInt16(99) # Forbidden by ISO/IEC 21320-1
 
+const COMPRESSION_LOOKUP = Dict{Symbol,UInt16}(
+    :store => COMPRESSION_STORE,
+    :deflate => COMPRESSION_DEFLATE,
+)
+
+function compression_code(s::Symbol)
+    return COMPRESSION_LOOKUP[s]
+end
+compression_code(x::UInt16) = x
+
 const HEADER_ZIP64 = UInt16(0x0001)
 const HEADER_AV_INFO = UInt16(0x0007)
 const HEADER_OS2 = UInt16(0x0009)

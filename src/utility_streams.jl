@@ -1,4 +1,4 @@
-import Base: bytesavailable, close, eof, isopen, isreadable, iswritable, unsafe_read, read
+import Base: bytesavailable, close, eof, flush, isopen, isreadable, iswritable, unsafe_read, read
 
 """
     CRC32InputStream
@@ -49,8 +49,9 @@ function CRC32OutputStream(sink::T) where {T}
     return CRC32OutputStream{T}(sink, CRC32_INIT)
 end
 
-Base.close(s::CRC32OutputStream) = close(s.ssinkurce)
+Base.close(s::CRC32OutputStream) = close(s.sink)
 Base.eof(s::CRC32OutputStream) = eof(s.sink)
+Base.flush(s::CRC32OutputStream) = flush(s.sink)
 Base.isopen(s::CRC32OutputStream) = isopen(s.sink)
 Base.isreadable(s::CRC32OutputStream) = false
 Base.iswritable(s::CRC32OutputStream) = iswritable(s.sink)

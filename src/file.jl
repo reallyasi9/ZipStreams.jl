@@ -479,6 +479,9 @@ function Base.write(io::IO, header::CentralDirectoryHeader; zip64::Union{Bool,No
 
     # general purpose flags: 2 bytes
     flags = UInt16(0)
+    if header.info.descriptor_follows
+        flags |= FLAG_FILE_SIZE_FOLLOWS
+    end
     doutf8 = (utf8 == true) || header.info.utf8
     if doutf8
         flags |= FLAG_LANGUAGE_ENCODING
