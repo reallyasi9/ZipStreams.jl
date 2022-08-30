@@ -62,7 +62,7 @@ function Base.unsafe_write(s::CRC32OutputStream, p::Ptr{UInt8}, nb::UInt)
     return n
 end
 
-function Base.write(s::CRC32OutputStream, x)
+function Base.write(s::CRC32OutputStream, x::UInt8)
     nb = write(s.sink, x)
     s.crc32 = crc32([x], s.crc32)
     return nb
@@ -89,19 +89,20 @@ Base.close(s::TruncatedInputStream) = close(s.source)
 Base.eof(s::TruncatedInputStream) = s.bytes_remaining == 0 || eof(s.source)
 Base.isopen(s::TruncatedInputStream) = isopen(s.source)
 
-function Base.read(s::TruncatedInputStream, ::Type{T}) where {T <: Integer}
-    sz = sizeof(T)
-    if eof(s) || sz > s.bytes_remaining
-        throw(EOFError())
-    end
-    s.bytes_remaining -= sz
-    return read(s.source, T)
-end
-
 function Base.read(s::TruncatedInputStream, ::Type{UInt8})
     if eof(s)
         throw(EOFError())
     end
     s.bytes_remaining -= 1
     return read(s.source, UInt8)
+end
+
+function Base.unsafe_read(s::TruncatedInputStream, p::Ptr{UInt8}, n::UInt)
+    if eof(s) || n > s.bytes_remaining
+        throw(EOFError())
+    end
+    # nb = min(s.bytes_remaining, n)
+    nr = unsafe_read(s.source, p, n)
+    s.bytes_remaining -= nr
+    return nr
 end
