@@ -93,7 +93,7 @@ function Base.show(io::IO, info::ZipFileInformation)
         print(io, COMPRESSION_INFO_FORMAT[info.compression_method+1], " ")
     end
     # last modified date and time
-    print(io, Dates.format(info.last_modified, dateformat"dd-uuu-yy HH:MM:ss "))
+    print(io, Dates.format(info.last_modified, dateformat"dd-uuu-yy HH:MM:SS "))
 
     # extra: CRC32
     @printf(io, "0x%08x ", info.crc32)
