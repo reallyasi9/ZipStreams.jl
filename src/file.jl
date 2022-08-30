@@ -385,7 +385,7 @@ function Base.read(io::IO, ::Type{CentralDirectoryHeader})
     # TODO: local file attribute information
     skip(io, 2)
     external_mode = readle(io, UInt32)
-    isdir = external_mode & (UNIX_IFDIR << 16)
+    isdir = (external_mode & (UNIX_IFDIR << 16)) != 0
     offset = UInt64(readle(io, UInt32))
 
     encoding = utf8 ? enc"UTF-8" : enc"IBM437"
