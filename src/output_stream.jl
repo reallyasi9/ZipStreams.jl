@@ -3,6 +3,27 @@ import Base: open, close, mkdir, mkpath, write, unsafe_write, flush, isopen, isw
 using Dates
 using TranscodingStreams
 
+"""
+    ZipFileOutputStream{S,R}([arguments])
+
+A struct representing an open streamable file in a `ZipArchiveOutputStream`.
+
+This struct is an `IO` object, so it inherits `write()` and `unsafe_write()`
+methods from `IO`. You cannot read from this type, nor can you seek, skip, or
+read the file's position. It functions in this way to allow writing to write-only
+streams (like HTTP output).
+
+The types `S` and `R` represent the `TranscodingStream` types associated with the
+(potentially compressed) stream that writes the file information and the raw
+`ZipArchiveOutputStream` where this object writes associated file metadata.
+
+You can only have one `ZipFileOutputStream` open per `ZipArchiveOutputStream`.
+Attempts to open a second file in the same archive will issue a warning and
+automatically close the previous file before opening the new file.
+
+You should not call the struct constructor directly: instead, use
+`open(archive, filename)`.
+"""
 mutable struct ZipFileOutputStream{S<:IO,R<:IO} <: IO
     sink::S
     info::ZipFileInformation
@@ -10,21 +31,37 @@ mutable struct ZipFileOutputStream{S<:IO,R<:IO} <: IO
     offset::UInt64
 
     _raw_sink::R
-    _bytes_written::UInt64
+    _crc32::UInt32
     # don't close twice
     _closed::Bool
 end
 
+"""
+    close(zipoutfile)
+
+Closes a `ZipFileOutputStream`. This method must be called before closing the
+enclosing `ZipArchiveOutputStream` or before opening a new `ZipFileOutputStream`
+in the same archive so that the appropriate Data Descriptor information can be
+written to disk and the file can be added to the archive.
+
+It is automatically called by `close(zipoutarchive)` and the finalizer routine of
+`ZipFileOutputStream` objects, but it is best practice to close the file manually
+when you have finished writing to it.
+
+# Examples
+```julia
+```
+"""
 function Base.close(zipfile::ZipFileOutputStream)
     if zipfile._closed
         @debug "File already closed"
         return
     end
-    crc32 = zipfile.sink.crc32
+    crc32 = zipfile._crc32
     @debug "Flushing writes to file" bytes=zipfile._bytes_written
-    write(zipfile.sink.sink, TranscodingStreams.TOKEN_END)
-    flush(zipfile.sink.sink)
-    stats = TranscodingStreams.stats(zipfile.sink.sink)
+    write(zipfile.sink, TranscodingStreams.TOKEN_END)
+    flush(zipfile.sink)
+    stats = TranscodingStreams.stats(zipfile.sink)
     @debug "Stats read from closed sink" stats
     compressed_size = stats.transcoded_out % UInt64
     uncompressed_size = stats.transcoded_in % UInt64
@@ -36,6 +73,8 @@ function Base.close(zipfile::ZipFileOutputStream)
     writele(zipfile._raw_sink, compressed_size)
     writele(zipfile._raw_sink, uncompressed_size)
 
+    # Only force Zip64 in the Central Directory if necessary
+    zip64 = zipfile.offset >= typemax(UInt32) || compressed_size >= typemax(UInt32) || uncompressed_size >= typemax(UInt32)
     directory_info = ZipFileInformation(
         zipfile.info.compression_method,
         uncompressed_size,
@@ -45,9 +84,17 @@ function Base.close(zipfile::ZipFileOutputStream)
         zipfile.info.name,
         true,
         zipfile.info.utf8,
-        true, # force Zip64 format
+        zip64,
     )
-    push!(zipfile._raw_sink.directory, CentralDirectoryHeader(directory_info, zipfile.offset, zipfile.comment))
+    push!(
+        zipfile._raw_sink.directory,
+        CentralDirectoryHeader(
+            directory_info,
+            zipfile.offset,
+            zipfile.comment,
+            false,
+        ),
+    )
 
     zipfile._closed = true
 
@@ -61,29 +108,22 @@ function Base.write(zipfile::ZipFileOutputStream, value::UInt8)
     if zipfile._closed
         throw(EOFError())
     end
-    @debug "Writing byte to zipfile" value
-    nb = write(zipfile.sink, value)
-    zipfile._bytes_written += nb
-    @debug "Bytes written so far" bytes=zipfile._bytes_written
-    return nb
+    zipfile._crc32 = crc32(value, zipfile._crc32)
+    return write(zipfile.sink, value)
 end
 
 function Base.unsafe_write(zf::ZipFileOutputStream, p::Ptr{UInt8}, n::UInt)
     if zf._closed
         throw(EOFError())
     end
-    @debug "Writing bytes to zipfile" p n
-    nb = unsafe_write(zf.sink, p, n)
-    zf._bytes_written += nb
-    @debug "Bytes written so far" bytes=zf._bytes_written
-    return nb
+    zf._crc32 = crc32(p, n, zf._crc32)
+    return unsafe_write(zf.sink, p, n)
 end
 
 Base.flush(zf::ZipFileOutputStream) = flush(zf.sink)
-Base.position(zf::ZipFileOutputStream) = zf._bytes_written
 Base.isopen(zf::ZipFileOutputStream) = isopen(zf.sink)
 Base.isreadable(zf::ZipFileOutputStream) = false
-Base.iswritable(zf::ZipFileOutputStream) = iswritable(zf.sink)
+Base.iswritable(zf::ZipFileOutputStream) = !zf._closed && iswritable(zf.sink)
 
 
 """
@@ -95,10 +135,12 @@ Zip archives are optimized for appending to the end of the archive. This struct
 is used in tandem with library functions to keep track of what is appended to a
 Zip archive so that a proper Central Directory can be written at the end.
 
-Use the [`zipsink`](@ref) method to open an existing Zip archive file or to
-create a new one.
+Users should not call the `ZipArchiveOutputStream` constructor: instead, use the
+[`zipsink`](@ref) method to create a new streaming archive.
 
 # Examples
+```julia
+```
 """
 mutable struct ZipArchiveOutputStream{S<:IO} <: IO
     sink::S
@@ -108,12 +150,11 @@ mutable struct ZipArchiveOutputStream{S<:IO} <: IO
     comment::String
 
     _folders_created::Set{String}
-    _bytes_written::UInt64
     _open_file::Ref{ZipFileOutputStream}
 end
 
 """
-    zipsink(fname, [mode=:append]; [keyword arguments]) -> ZipArchiveOutputStream
+    zipsink(fname; [keyword arguments]) -> ZipArchiveOutputStream
     zipsink(io; [keyword arguments]) -> ZipArchiveOutputStream
     zipsink(f, args...)
 
@@ -121,14 +162,10 @@ Open an `IO` stream of a Zip archive for writing data.
 
 # Positional arguments
 - `fname::AbstractString`: The name of a Zip archive file to open for writing.
-Will be created if the file does not exist.
-- `mode::AbstractString="a"`: The operation mode of the stream. Can be any of the
-following:
-| Mode | Description |
-|:-----|:------------|
-| `w`  | Write to the file, creating it if it does not exist, and truncating the length to zero. |
-| `a`  | Append to the file, overwriting the Central Directory at the end (if detected) with updated contents. |
-
+Will be created if the file does not exist. If the file does exist, it will be
+truncated before writing.
+- `io::IO`: An `IO` object that can be written to. The object will be closed when
+you call `close` on the returned object.
 - `f<:Function`: A unary function to which the opened stream will be passed. This
 method signature allows for `do` block usage. When called with the signature, the
 return value of `f` will be returned to the user.
@@ -138,7 +175,8 @@ return value of `f` will be returned to the user.
 `false`, follows the Zip standard of treating text as encoded in IBM437 encoding.
 - `comment::AbstractString=""`: A comment to store with the Zip archive. This
 information is stored in plain text at the end of the archive and does not affect
-the Zip archive in any other way.
+the Zip archive in any other way. The comment is always stored using IBM437
+encoding.
 
 !!! note "Using `IO` argument"
 
@@ -158,7 +196,15 @@ function zipsink(
     comment::AbstractString = ""
 )
     directory = CentralDirectoryHeader[]
-    z = ZipArchiveOutputStream(sink, directory, utf8, comment, Set{String}(), 0 % UInt64, Ref{ZipStreams.ZipFileOutputStream}())
+    outsink = TranscodingStreams.NoopStream(sink)
+    z = ZipArchiveOutputStream(
+        outsink,
+        directory,
+        utf8,
+        comment,
+        Set{String}(),
+        Ref{ZipStreams.ZipFileOutputStream}(),
+    )
     finalizer(close, z)
     return z
 end
@@ -171,10 +217,24 @@ function Base.close(archive::ZipArchiveOutputStream)
         close(archive._open_file[])
     end
     # write the Central Directory headers
-    write_directory(archive.sink, archive.directory; startpos=archive._bytes_written, comment=archive.comment, utf8=archive.utf8)
+    stat = TranscodingStreams.stats(archive.sink)
+    startpos = stat.transcoded_out
+    write_directory(archive.sink, archive.directory; startpos=startpos, comment=archive.comment, utf8=archive.utf8)
     close(archive.sink)
 end
 
+"""
+    mkdir(archive, path; comment="")
+
+Make a directory within a Zip archive.
+
+If the parent directory does not exist, an error will be thrown. Use
+[`mkpath`](@ref) to create the entire directory tree at once. If given, the
+`comment` string will be added to the archive's metadata for the directory.
+
+Directories in Zip archives are merely length zero files with names that end in
+the `'/'` character.
+"""
 function Base.mkdir(ziparchive::ZipArchiveOutputStream, path::AbstractString; comment::AbstractString="")
     paths = split(path, ZIP_PATH_DELIMITER; keepempty=false)
     if isempty(paths)
@@ -198,7 +258,9 @@ function Base.mkdir(ziparchive::ZipArchiveOutputStream, path::AbstractString; co
         ziparchive.utf8,
         false,
     )
-    offset = ziparchive._bytes_written
+    # get the offset before writing anything
+    stat = TranscodingStreams.stats(ziparchive.sink)
+    offset = stat.transcoded_out % UInt64
     local_file_header = LocalFileHeader(info)
     nb = write(ziparchive, local_file_header)
     central_directory_header = CentralDirectoryHeader(info, offset, comment, true)
@@ -207,6 +269,18 @@ function Base.mkdir(ziparchive::ZipArchiveOutputStream, path::AbstractString; co
     return nb
 end
 
+"""
+    mkpath(archive, path; comment="")
+
+Make a directory within a Zip archive.
+
+If the parent directory does not exist, all parent paths will be created. If
+given, the `comment` string will be added to the archive's metadata for the final
+path element (all other created parent paths will have no comment).
+
+Directories in Zip archives are merely length zero files with names that end in
+the `'/'` character.
+"""
 function Base.mkpath(ziparchive::ZipArchiveOutputStream, path::AbstractString; comment::AbstractString="")
     paths = split(path, ZIP_PATH_DELIMITER; keepempty=false)
     nb = 0
@@ -223,15 +297,11 @@ function Base.mkpath(ziparchive::ZipArchiveOutputStream, path::AbstractString; c
 end
 
 function Base.write(za::ZipArchiveOutputStream, value::UInt8)
-    nb = write(za.sink, value)
-    za._bytes_written += nb
-    return nb
+    return write(za.sink, value)
 end
 
 function Base.unsafe_write(za::ZipArchiveOutputStream, x::Ptr{UInt8}, n::UInt)
-    nb = unsafe_write(za.sink, x, n)
-    za._bytes_written += nb
-    return nb
+    return unsafe_write(za.sink, x, n)
 end
 
 
@@ -240,12 +310,39 @@ end
 
 Create a file within a Zip archive and return a handle for writing.
 
+
+# Keyword arguments
+- `compression::Union{UInt16,Symbol} = :deflate`: Can be one of `:deflate`,
+`:store`, or the associated codes defined by the Zip archive standard (`0x0008`
+or `0x0000`, respectively). Determines how the data is compressed when writing to
+the archive.
+- `utf8::Bool = true`: If `true`, the file name and comment will be written to the
+archive metadata encoded in UTF-8 strings, and a flag will be set in the metadata
+to instruct decompression programs to read these strings as such. If `false`, the
+default IBM437 encoding will be used. This does not affect the file data itself.
+- `comment::AbstractString = ""`: Comment metadata to add to the archive about the
+file. This does not affect the file data itself.
+
 !!! warning "Duplicate file names"
 
     The Zip archive specification does not clearly define what to do if multiple
     files in the Zip archive share the same name. This method will allow the user
     to create files with the same name in a single Zip archive, but other software
     may not behave as expected when reading the archive.
+
+!!! note "Streaming output"
+
+    File written using `ZipFileOutputStream` methods are incompatable with the
+    streaming reading methods of `ZipFileInputStream`. This is because the
+    program cannot not know the final compressed and uncompressed file size nor
+    the CRC-32 checksum while writing until the file is closed, meaning these
+    fields are not accurate in the Local File Header. The streaming reader relies
+    on file size information in the Local File Header to know when to stop reading
+    file data, thus the two methods are incompatable.
+
+# Examples
+```julia
+```
 """
 function Base.open(
     archive::ZipArchiveOutputStream,
@@ -271,7 +368,10 @@ function Base.open(
 
     # 1. write local header to parent
     ccode = compression_code(compression)
-    offset = position(archive)
+    # get the offset before the local header is written
+    flush(archive)
+    stat = TranscodingStreams.stats(archive.sink)
+    offset = stat.transcoded_out % UInt64
     info = ZipFileInformation(
         ccode,
         0,
@@ -294,8 +394,7 @@ function Base.open(
     else
         error("undefined compression type $compression")
     end
-    transcoder = TranscodingStream(codec, archive)
-    filesink = CRC32OutputStream(transcoder)
+    filesink = TranscodingStream(codec, archive)
 
     # 3. create file object
     zipfile = ZipFileOutputStream(
@@ -304,7 +403,7 @@ function Base.open(
         comment,
         offset,
         archive,
-        0 % UInt64,
+        CRC32_INIT,
         false,
     )
 
@@ -319,7 +418,6 @@ function Base.open(
 end
 
 Base.flush(za::ZipArchiveOutputStream) = flush(za.sink)
-Base.position(za::ZipArchiveOutputStream) = za._bytes_written
 Base.isopen(za::ZipArchiveOutputStream) = isopen(za.sink)
 Base.isreadable(za::ZipArchiveOutputStream) = false
 Base.iswritable(za::ZipArchiveOutputStream) = iswritable(za.sink)
