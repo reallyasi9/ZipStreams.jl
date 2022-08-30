@@ -201,7 +201,7 @@ function Base.mkdir(ziparchive::ZipArchiveOutputStream, path::AbstractString; co
     offset = ziparchive._bytes_written
     local_file_header = LocalFileHeader(info)
     nb = write(ziparchive, local_file_header)
-    central_directory_header = CentralDirectoryHeader(info, offset, comment)
+    central_directory_header = CentralDirectoryHeader(info, offset, comment, true)
     push!(ziparchive.directory, central_directory_header)
     push!(ziparchive._folders_created, path)
     return nb

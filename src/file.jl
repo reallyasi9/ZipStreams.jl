@@ -162,7 +162,7 @@ function Base.read(io::IO, ::Type{LocalFileHeader})
     extrafield_length = readle(io, UInt16)
     
     encoding = utf8 ? enc"UTF-8" : enc"IBM437"
-    (filename, bytes_read) = readstring(io, filename_length; encoding = encoding)
+    filename = first(readstring(io, filename_length; encoding = encoding))
 
     extra_read = 0
     zip64 = false
@@ -346,6 +346,7 @@ struct CentralDirectoryHeader
     info::ZipFileInformation
     offset::UInt64
     comment::String
+    directory::Bool
 end
 
 function Base.read(io::IO, ::Type{CentralDirectoryHeader})
@@ -373,8 +374,10 @@ function Base.read(io::IO, ::Type{CentralDirectoryHeader})
     if disk ∉ (0, 1)
         @warn "Archives spanning multiple disks are not supported" disk
     end
-    # TODO: local and external file attribute information
-    skip(io, 6)
+    # TODO: local file attribute information
+    skip(io, 2)
+    external_mode = readle(io, UInt32)
+    isdir = external_mode & (UNIX_IFDIR << 16)
     offset = UInt64(readle(io, UInt32))
 
     encoding = utf8 ? enc"UTF-8" : enc"IBM437"
@@ -449,18 +452,21 @@ function Base.read(io::IO, ::Type{CentralDirectoryHeader})
         utf8,
         zip64,
     )
-    return CentralDirectoryHeader(info, offset, comment)
+    return CentralDirectoryHeader(info, offset, comment, isdir)
 end
 
-
-
-function Base.write(io::IO, header::CentralDirectoryHeader; zip64::Union{Bool,Nothing}=nothing, utf8::Union{Bool,Nothing}=nothing)
+function Base.write(
+        io::IO,
+        header::CentralDirectoryHeader;
+        zip64::Union{Bool,Nothing}=nothing,
+        utf8::Union{Bool,Nothing}=nothing,
+    )
     nb = 0
     # signature: 4 bytes
     nb += writele(io, SIG_CENTRAL_DIRECTORY)
 
-    # version made by: 2 byted
-    nb += writele(io, ZIP64_MINIMUM_VERSION)
+    # version made by: 2 bytes, always claim to be made by a UNIX system
+    nb += writele(io, ZIP64_MINIMUM_VERSION | UNIX_VERSION)
 
     # version required to extract: 2 bytes
     dozip64 = (zip64 == true) || header.info.zip64
@@ -527,10 +533,16 @@ function Base.write(io::IO, header::CentralDirectoryHeader; zip64::Union{Bool,No
     nb += writele(io, 0 % UInt16)
 
     # internal file attributes: 2 bytes
-    # external file attributes: 4 bytes
     # TODO
+
     nb += writele(io, 0 % UInt16)
-    nb += writele(io, 0 % UInt32)
+
+    # external file attributes: 4 bytes
+    # never claim to be a pipe
+    external_mode = header.directory ? (UNIX_IFDIR | UNIX_IXUSR) : UNIX_IFREG
+    external_mode |= UNIX_IRUSR | UNIX_IWUSR
+    
+    nb += writele(io, (external_mode << 16) % UInt32)
 
     # offset of header: 4 bytes
     if dozip64
