@@ -241,19 +241,19 @@ function Base.mkdir(ziparchive::ZipArchiveOutputStream, path::AbstractString; co
         return path
     end
     for i in 1:length(paths)-1
-        p = join(paths[1:i], "/")
+        p = join(paths[1:i], ZIP_PATH_DELIMITER)
         if p ∉ ziparchive._folders_created
             error("cannot create directory '$path': path '$p' does not exist")
         end
     end
-    path = join(paths, "/")
+    path = join(paths, ZIP_PATH_DELIMITER)
     info = ZipFileInformation(
         COMPRESSION_STORE,
         0,
         0,
         now(),
         0,
-        path * "/",
+        path * ZIP_PATH_DELIMITER,
         false,
         ziparchive.utf8,
         false,
