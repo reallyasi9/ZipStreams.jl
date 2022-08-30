@@ -135,6 +135,9 @@ mutable struct ZipArchiveInputStream{S<:IO} <: IO
     source::S
     directory::Vector{ZipFileInformation}
     offsets::Vector{UInt64}
+
+    # make sure we do not iterate into the central directory
+    _no_more_files::Bool
 end
 
 function Base.show(io::IO, za::ZipArchiveInputStream)
@@ -200,7 +203,7 @@ blocks.
 """
 function zipstream(io::IO)
     stream = TranscodingStreams.NoopStream(io)
-    zs = ZipArchiveInputStream(stream, ZipFileInformation[], UInt64[])
+    zs = ZipArchiveInputStream(stream, ZipFileInformation[], UInt64[], false)
     finalizer(close, zs)
     return zs
 end
@@ -294,17 +297,23 @@ function validate(zs::ZipArchiveInputStream)
 end
 
 function Base.iterate(zs::ZipArchiveInputStream, state::Int=0)
+    if zs._no_more_files
+        # nothing else to read (already saw the central directory)
+        return nothing
+    end
     # skip everything at the start of the archive that is not the next signature.
     sentinel = htol(reinterpret(UInt8, [SIG_L]))
     while true
         readuntil(zs, sentinel)
         if eof(zs)
+            zs._no_more_files = true
             return nothing
         end
         highbytes = readle(zs, UInt16)
         if highbytes == SIG_LOCAL_FILE_H
             break
         elseif highbytes == SIG_CENTRAL_DIRECTORY_H
+            zs._no_more_files = true
             return nothing
         end
     end
@@ -321,6 +330,15 @@ function Base.iterate(zs::ZipArchiveInputStream, state::Int=0)
     zf = zipfile(header.info, zs)
     return (zf, state+1)
 end
+
+"""
+    nextfile(archive) => Union{IO, Nothing}
+
+Read the next file in the archive and return a readable `IO` object or `nothing`.
+
+This is the same as calling `first(iterate(archive))`.
+"""
+nextfile(archive::ZipArchiveInputStream) = first(iterate(archive))
 
 Base.IteratorSize(::Type{ZipArchiveInputStream}) = Base.SizeUnknown()
 Base.IteratorEltype(::Type{ZipArchiveInputStream}) = Base.HasEltype()
