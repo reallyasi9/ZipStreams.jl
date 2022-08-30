@@ -221,7 +221,12 @@ function Base.read(io::IO, ::Type{LocalFileHeader})
 
 end
 
-function Base.write(io::IO, header::LocalFileHeader; zip64::Union{Bool,Nothing}=nothing, utf8::Union{Bool,Nothing}=nothing)
+function Base.write(
+        io::IO,
+        header::LocalFileHeader;
+        zip64::Union{Bool,Nothing}=nothing,
+        utf8::Union{Bool,Nothing}=nothing
+    )
 
     # signature: 4 bytes
     nb = writele(io, SIG_LOCAL_FILE)
@@ -245,6 +250,9 @@ function Base.write(io::IO, header::LocalFileHeader; zip64::Union{Bool,Nothing}=
     doutf8 = (utf8 == true) || header.info.utf8
     if doutf8
         flags |= FLAG_LANGUAGE_ENCODING
+    end
+    if header.info.descriptor_follows
+        flags |= FLAG_FILE_SIZE_FOLLOWS
     end
     nb += writele(io, flags)
 
