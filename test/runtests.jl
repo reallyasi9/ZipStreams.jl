@@ -9,6 +9,19 @@ const THIS_DIR = dirname(@__FILE__)
 
 # All test files have the same content
 const FILE_CONTENT = "Hello, Julia!"
+function file_info(; name::AbstractString="hello.txt", zip64::Bool=false)
+    return ZipStreams.ZipFileInformation(
+        ZipStreams.COMPRESSION_DEFLATE,
+        13,
+        15,
+        DateTime(2022, 8, 18, 23, 21, 38),
+        0xb2284bb4,
+        name, # Note: might be different for different files
+        false,
+        false,
+        zip64,
+    )
+end
 const FILE_INFO = ZipStreams.ZipFileInformation(
     ZipStreams.COMPRESSION_DEFLATE,
     13,
@@ -243,6 +256,26 @@ end
                 @test header.offset == 0
                 @test header.comment == ""
             end
+        end
+    end
+end
+
+@testset "Input archive construction" begin
+    
+end
+
+@testset "Archive iteration" begin
+    @testset "nextfile" begin
+        @testset "Empty archive" begin
+
+        end
+
+        @testset "Simple archive" begin
+
+        end
+
+        @testset "Multi archive" begin
+
         end
     end
 end

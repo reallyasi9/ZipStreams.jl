@@ -20,21 +20,22 @@ will ignore the files that are no longer cataloged.
 This design choice means that standards-conformant readers like [`ZipFile.jl`](https://github.com/fhs/ZipFile.jl)
 cannot know what files are stored in a ZIP archive until they read the very end of
 the file. While this is not typically a problem on modern SSD-based storage where
-random file access is fast, it is a major limitation on stream-based file storage
+random file access is fast, it is a major limitation on stream-based file transfer
 systems like networks, where readers typically have no choice but to read an
-entire file from beginning to end in order, and to seek from the end back to
-where a given file is stored in the archive, one has to buffer _the entire file_
-in memory or on disk. Again, this is not a problem for archives with sizes on the
-order of megabytes, but standard ZIP archives can be as large as 4GB, which can
-easily overwhelm systems with limited memory or storage like embedded systems or
-cloud-based micro-instances, and ZIP64 archives can be 16 EB (2^64 bytes), which
-can easily overwhelm even the largest of modern supercomputers.
+entire file from beginning to end in order, and to seek from the end of the
+archive back to where a given file is stored in the archive, one has to buffer
+_the entire file_ in memory or on disk. Again, this is not a problem for archives
+with sizes on the order of megabytes, but standard ZIP archives can be as large as
+4GB, which can easily overwhelm systems with limited memory or storage like
+embedded systems or cloud-based micro-instances. To make matters worse, ZIP64
+archives can be 16 EB (2^64 bytes), which can easily overwhelm even the largest of
+modern supercomputers.
 
 However, the ZIP archive specification also states that each file in the archive
-have a "Local File Header" preceeding the (possibly compressed) file data. The
+has a "Local File Header" preceeding the (possibly compressed) file data. The
 Local File Header contains enough information to allow a reader to extract the
-file and perform simple error checking immediately, so long as three conditions
-are met:
+file and perform simple error checking immediately as long as three conditions are
+met:
 1. The information in the Local File Header is correctly specified. The Central
 Directory is the canonical source of information, so the Local File Header could
 be lying.
@@ -42,8 +43,7 @@ be lying.
 masked from the Local File Header if the Central Directory is encrypted, so it is
 impossible to know where the file ends.
 3. The file was not stored with a "Data Descriptor" (general purpose flag 3). This
-is typically used only when the file is _written_ to the archive in a streaming
-fashion.
+is typically used only when the archive is _written_ in a streaming fashion.
 
 That being said, most users will never see ZIP files that cannot be extracted
 exclusively using Local File Header information.
@@ -73,7 +73,7 @@ You have been warned!
 
 Install via the Julia package manager, `Pkg.add("ZipStreams")`.
 
-You can wrap any Julia `IO` object with the `zipstream` function. The returned
+You can wrap any Julia `IO` object with the `zipsource` function. The returned
 struct can be iterated to read archived files in archive order. Information about
 each file is stored in the `.info` property of the struct returned from the
 iterator. The struct returned from the iterator is readable like any standard
@@ -86,7 +86,7 @@ using ZipStreams
 
 # open an archive
 open("archive.zip") do io
-    zs = zipstream(io)
+    zs = zipsource(io)
 
     # iterate through files
     for f in zs
@@ -105,7 +105,7 @@ end
 using BufferedStreams
 using HTTP
 HTTP.open(:GET, "https://download.cms.gov/nppes/NPPES_Data_Dissemination_August_2022.zip") do http
-    zipstream(BufferedInputStream(http)) do zs
+    zipsource(BufferedInputStream(http)) do zs
         for f in zs
             println(f.info.name)
             break
@@ -114,23 +114,24 @@ HTTP.open(:GET, "https://download.cms.gov/nppes/NPPES_Data_Dissemination_August_
 end
 
 # convenience method for opening an archive as a zipstream
-zs = zipstream("archive.zip")
+zs = zipsource("archive.zip")
 close(zs)
 
 # convenience method for automatically closing the archive when done
-zipstream("archive.zip") do zs
+zipsource("archive.zip") do zs
     ...
 end
 
-# store additional information while iterating through the archive to allow validation
-zipstream("archive.zip"; store_file_info=true, calculate_crc32s=true) do zs
+# local header information is stored while iterating through the archive,
+# which allows validation against the central directory
+zipsource("archive.zip") do zs
 
     # validate individual files
     for f in zs
-        validate(f) # throws if there is a problem
+        validate(f) # throws if there is a problem, returns file data
     end
 
-    # validate the entire archive at once (including the individual files)
-    validate(zs) # throws if there is a problem
+    # validate the entire archive at once (including the remaining files)
+    validate(zs) # throws if there is a problem, returns a vector of file data
 end
 ```
