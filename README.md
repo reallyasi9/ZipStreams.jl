@@ -8,50 +8,44 @@ standards just a little bit.
 > -Homer from The Simpsons, season 10, episode 13: "Homer to the Max"
 
 ZIP archives are optimized for _appending_ and _deleting_ operations. This is
-because the canonical source of information for what is stored in a ZIP archive
-is the "Central Directory", data written at the very end of the archive. Users
+because the canonical source of information for what is stored in a ZIP archive,
+the "Central Directory", is written at the very end of the archive. Users
 who want to append a file to the archive can overwrite the Central Directory with
-new file data, then append a new, updated Central Directory afterward, and nothing
+new file data, then append an updated Central Directory afterward, and nothing
 else in the file has to be touched. Likewise, users who want to delete files in
 the archive only have to change the entries in the Central Directory: readers
 that conform to the _de facto_ standard described in the [PKWARE APPNOTE file](https://pkware.cachefly.net/webdocs/casestudies/APPNOTE.TXT)
-will ignore the files that are no longer cataloged.
+will ignore the files that are no longer listed.
 
 This design choice means that standards-conformant readers like [`ZipFile.jl`](https://github.com/fhs/ZipFile.jl)
-cannot know what files are stored in a ZIP archive until they read the very end of
-the file. While this is not typically a problem on modern SSD-based storage where
+cannot know what files are stored in a ZIP archive until they read to the very end of
+the file. While this is not typically a problem on modern SSD-based storage, where
 random file access is fast, it is a major limitation on stream-based file transfer
 systems like networks, where readers typically have no choice but to read an
-entire file from beginning to end in order, and to seek from the end of the
-archive back to where a given file is stored in the archive, one has to buffer
-_the entire file_ in memory or on disk. Again, this is not a problem for archives
+entire file from beginning to end in order. This is not a problem for archives
 with sizes on the order of megabytes, but standard ZIP archives can be as large as
 4GB, which can easily overwhelm systems with limited memory or storage like
 embedded systems or cloud-based micro-instances. To make matters worse, ZIP64
-archives can be 16 EB (2^64 bytes), which can easily overwhelm even the largest of
-modern supercomputers.
+archives can be up to 16 EB (2^64 bytes) in size, which can easily overwhelm even
+the largest of modern supercomputers.
 
-However, the ZIP archive specification also states that each file in the archive
-has a "Local File Header" preceeding the (possibly compressed) file data. The
+However, the ZIP archive specification also requires a "Local File Header" that
+preceeding the (possibly compressed) file data of every file in the archive. The
 Local File Header contains enough information to allow a reader to extract the
-file and perform simple error checking immediately as long as three conditions are
-met:
+file and perform simple error checking as long as three conditions are met:
 1. The information in the Local File Header is correctly specified. The Central
 Directory is the canonical source of information, so the Local File Header could
 be lying.
 2. The Central Directory is not encrypted. File sizes and checksum values are
 masked from the Local File Header if the Central Directory is encrypted, so it is
-impossible to know where the file ends.
-3. The file was not stored with a "Data Descriptor" (general purpose flag 3). This
-is typically used only when the archive is _written_ in a streaming fashion.
+impossible to know where the file ends and the next one begins.
+3. The file is not stored with a "Data Descriptor" (general purpose flag 3). As
+with encryption, files that are stored with a Data Descriptor have masked file
+sizes and checksums in the Local File Header. This format is typically used only
+when the archive is _written_ in a streaming fashion.
 
-That being said, most users will never see ZIP files that cannot be extracted
+All this being said, most users will never see ZIP files that cannot be extracted
 exclusively using Local File Header information.
-
-## Benchmarks
-
-This package is designed to be fast. See [this page]() for benchmark results
-against other standard ZIP archive readers.
 
 ## DO NOT BLINDLY TRUST ZIP ARCHIVES
 
@@ -71,7 +65,10 @@ You have been warned!
 
 ## Installation and use
 
-Install via the Julia package manager, `Pkg.add("ZipStreams")`.
+~~Install via the Julia package manager, `Pkg.add("ZipStreams")`.~~
+
+Until the package is published, install via the Julia package manager with
+`Pkg.add(; url="https://github.com/reallyasi9/ZipStreams.jl")`.
 
 You can wrap any Julia `IO` object with the `zipsource` function. The returned
 struct can be iterated to read archived files in archive order. Information about
@@ -135,3 +132,21 @@ zipsource("archive.zip") do zs
     validate(zs) # throws if there is a problem, returns a vector of file data
 end
 ```
+
+# Notes and aspirations
+
+This package was inspired by frustrations at using more standard ZIP archive
+reader/writers like [`ZipFile.jl`](https://github.com/fhs/ZipFile.jl). That's
+not to say ZipFile.jl is bad--on the contrary, it is _way_ more
+standards-compliant than this package ever intends to be! As you can see from
+the history of this repository, much of the work here started as a fork of
+that package.
+
+## To do
+
+* Document `zipsink` and `open` writing functionality
+* Add Documenter.jl hooks
+* Add benchmarks
+* Mock read-only and write-only streams for testing
+* Add all-at-once file writing
+* Add filesystem-like `open` function for reading.
