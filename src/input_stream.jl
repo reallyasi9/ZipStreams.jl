@@ -6,7 +6,7 @@ using TranscodingStreams
 """
     ZipFileInputStream
 
-A wrapper around an `IO`` stream that includes information about an archived file. 
+A wrapper around an `IO` stream that includes information about an archived file. 
 
 A `ZipFileInputStream` implements `read(zf, UInt8)`, allowing all other basic read
 opperations to treat the object as if it were a file. Information about the
@@ -19,7 +19,7 @@ mutable struct ZipFileInputStream{S<:IO} <: IO
     _crc32::UInt32
 end
 
-function zipfile(info::ZipFileInformation, io::IO)
+function zipfilesource(info::ZipFileInformation, io::IO)
     if info.descriptor_follows
         if info.compressed_size == 0
             error("files using data descriptors cannot be streamed")
@@ -33,8 +33,8 @@ function zipfile(info::ZipFileInformation, io::IO)
     return ZipFileInputStream(info, stream, CRC32_INIT)
 end
 
-function zipfile(f::F, info::ZipFileInformation, io::IO) where {F <: Function}
-    zipfile(info, io) |> f
+function zipfilesource(f::F, info::ZipFileInformation, io::IO) where {F <: Function}
+    zipfilesource(info, io) |> f
 end
 
 """
@@ -129,7 +129,7 @@ file information from the Central Directory at the end of the stream.
 `ZipArchiveInputStream` objects can be iterated. Each iteration returns an IO
 object that will lazily extract (and decompress) file data from the archive.
 
-Create `ZipArchiveInputStream` objects using the [`zipstream`](@ref) function.
+Create `ZipArchiveInputStream` objects using the [`zipsource`](@ref) function.
 """
 mutable struct ZipArchiveInputStream{S<:IO} <: IO
     source::S
@@ -170,8 +170,8 @@ function Base.show(io::IO, za::ZipArchiveInputStream)
 end
 
 """
-    zipstream(io)
-    zipstream(f, io)
+    zipsource(io)
+    zipsource(f, io)
 
 Create a read-only lazy streamable representation of a Zip archive.
 
@@ -191,27 +191,25 @@ blocks.
     The Central Directory in the Zip archive is the _authoritative source_ for
     file locations, compressed and uncompressed sizes, and CRC-32 checksums. A
     Local File Header can lie about this information, leading to improper file
-    extraction.  The `zipstream` method has a keyword argument
-    `validate_directory` which allows the user to validate the discovered files
-    against the Central Directory records when the stream is closed. It is
-    **highly** recommended that users validate the file contents against the
-    Central Directory before even beginning to trust the extracted files.
+    extraction.  We **highly** recommend that users validate the file contents
+    against the Central Directory using the `validate` method before beginning
+    to trust the extracted files from uncontrolled sources.
 
 # Examples
 ```jldoctest
 ```
 """
-function zipstream(io::IO)
+function zipsource(io::IO)
     stream = TranscodingStreams.NoopStream(io)
     zs = ZipArchiveInputStream(stream, ZipFileInformation[], UInt64[], false)
     finalizer(close, zs)
     return zs
 end
-zipstream(fname::AbstractString) = zipstream(Base.open(fname, "r"))
-zipstream(f::F, x) where {F<:Function} = zipstream(x) |> f
+zipsource(fname::AbstractString) = zipsource(Base.open(fname, "r"))
+zipsource(f::F, x) where {F<:Function} = zipsource(x) |> f
 
-open(fname::AbstractString) = zipstream(fname)
-open(f::F, x) where {F<:Function} = zipstream(x) |> f
+open(fname::AbstractString) = zipsource(fname)
+open(f::F, x) where {F<:Function} = zipsource(x) |> f
 
 Base.eof(zs::ZipArchiveInputStream) = eof(zs.source)
 Base.isopen(zs::ZipArchiveInputStream) = isopen(zs.source)
@@ -327,7 +325,7 @@ function Base.iterate(zs::ZipArchiveInputStream, state::Int=0)
     push!(zs.directory, header.info)
     push!(zs.offsets, offset)
 
-    zf = zipfile(header.info, zs)
+    zf = zipfilesource(header.info, zs)
     return (zf, state+1)
 end
 

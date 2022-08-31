@@ -21,14 +21,13 @@ end
 """
 module ZipStreams
 
-export validate, zipstream
+export validate, zipsource, zipsink
 
 include("crc32.jl")
 include("io.jl")
 include("constants.jl")
 include("headers.jl")
-include("utility_streams.jl")
-include("file.jl")
+include("truncated_input_stream.jl")
 include("input_stream.jl")
 include("output_stream.jl")
 

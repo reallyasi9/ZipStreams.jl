@@ -59,11 +59,6 @@ function readstring(io::IO; encoding::Union{String,Encoding} = enc"IBM437")
     return (s, bytes_read)
 end
 
-# For MS-DOS time/date format, see:
-# http://msdn.microsoft.com/en-us/library/ms724247(v=VS.85).aspx
-
-# Convert seconds since epoch to MS-DOS time/date, which has
-# a resolution of 2 seconds.
 """
     msdos2datetime(dosdate, dostime)
     datetime2msdos(datetime)
@@ -94,7 +89,7 @@ throw an exception.
 
 Note that the smallest unit of time is 2 seconds. `0x1e == 60` seconds and
 `0x1f == 62` seconds are valid values, but there is no clear specification for how
-they should be interpreted. There is likewise no specification for handling'
+they should be interpreted. There is likewise no specification for handling
 minutes greater than `0x3b` or hours greater than `0x17`. We choose to raise an
 exception.
 """
@@ -143,9 +138,9 @@ Seeks to `seekend(io)` if the signature is not found.
 """
 function seek_backward_to(io::IO, signature::Union{UInt8,AbstractVector{UInt8}})
     # TODO: This number was pulled out of a hat. Should probably be tuned.
-    nbytes = 4096
-    # Initialize to zeros to avoid accidental matches in dirty memory.
-    cache = zeros(UInt8, nbytes)
+    nbytes = max(4096, 10 * length(signature))
+    # Initialize in a way to avoid accidental matches in dirty memory.
+    cache = (all(==(0), signature)) ? ones(UInt8, nbytes) : zeros(UInt8, nbytes)
     skip(io, -nbytes)
     # Move back some large number of bytes per jump, but make sure there is
     # enough overlap to find the signature if the last jump stradled the line.
