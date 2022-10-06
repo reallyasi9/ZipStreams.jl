@@ -9,41 +9,57 @@ const THIS_DIR = dirname(@__FILE__)
 
 # All test files have the same content
 const FILE_CONTENT = "Hello, Julia!"
-function file_info(; name::AbstractString="hello.txt", zip64::Bool=false)
+function file_info(; name::AbstractString="hello.txt", descriptor::Bool=false, utf8::Bool=false, zip64::Bool=false, datetime::DateTime=DateTime(2022, 8, 18, 23, 21, 38), compression::UInt16=ZipStreams.COMPRESSION_STORE)
+    uc_size = 13 % UInt64
+    if compression == ZipStreams.COMPRESSION_DEFLATE
+        c_size = 15 % UInt64
+        crc = 0xb2284bb4
+    else
+        # FIXME in multi
+        uc_size = 14 % UInt64
+        c_size = uc_size
+        crc = 0xfe69594d
+    end
     return ZipStreams.ZipFileInformation(
-        ZipStreams.COMPRESSION_DEFLATE,
-        13,
-        15,
-        DateTime(2022, 8, 18, 23, 21, 38),
-        0xb2284bb4,
+        compression,
+        uc_size,
+        c_size,
+        datetime,
+        crc,
         name, # Note: might be different for different files
-        false,
-        false,
+        descriptor,
+        utf8,
         zip64,
     )
 end
-const FILE_INFO = ZipStreams.ZipFileInformation(
-    ZipStreams.COMPRESSION_DEFLATE,
-    13,
-    15,
-    DateTime(2022, 8, 18, 23, 21, 38),
-    0xb2284bb4,
-    "hello.txt", # Note: might be different for different files
-    false,
-    false,
-    false,
-)
-const ZIP64_FILE_INFO = ZipStreams.ZipFileInformation(
-    ZipStreams.COMPRESSION_DEFLATE,
-    13,
-    15,
-    DateTime(2022, 8, 18, 23, 21, 38),
-    0xb2284bb4,
-    "hello.txt", # Note: might be different for different files
-    false,
-    false,
-    true,
-)
+function subdir_info(; name::AbstractString="subdir/", datetime::DateTime=DateTime(2020, 8, 18, 23, 21, 38), utf8::Bool=false, zip64::Bool=false)
+    return ZipStreams.ZipFileInformation(
+        ZipStreams.COMPRESSION_STORE,
+        0,
+        0,
+        datetime,
+        ZipStreams.CRC32_INIT,
+        name, # Note: might be different for different files
+        false,
+        utf8,
+        zip64,
+    )
+end
+const FILE_INFO = file_info(; compression=ZipStreams.COMPRESSION_DEFLATE)
+const ZIP64_FILE_INFO = file_info(; compression=ZipStreams.COMPRESSION_DEFLATE, zip64=true)
+const SUBDIR_INFO = subdir_info()
+const MULTI_INFO = ZipStreams.ZipFileInformation[
+    file_info(; name="hello1.txt", datetime=DateTime(2022, 8, 19, 21, 46, 44)),
+    subdir_info(; name="subdir/", datetime=DateTime(2022, 8, 19, 21, 47, 34)),
+    file_info(; name="subdir/hello2.txt", datetime=DateTime(2022, 8, 19, 21, 47, 24)),
+    file_info(; name="subdir/hello3.txt", datetime=DateTime(2022, 8, 19, 21, 47, 34)),
+    subdir_info(; name="subdir/subdir/", datetime=DateTime(2022, 8, 19, 21, 47, 44)),
+    subdir_info(; name="subdir/subdir/subdir/", datetime=DateTime(2022, 8, 19, 21, 48, 2)),
+    file_info(; name="subdir/subdir/subdir/hello5.txt", datetime=DateTime(2022, 8, 19, 21, 47, 54)),
+    file_info(; name="subdir/subdir/subdir/hello6.txt", datetime=DateTime(2022, 8, 19, 21, 48, 00)),
+    file_info(; name="subdir/subdir/subdir/hello7.txt", datetime=DateTime(2022, 8, 19, 21, 48, 02)),
+    file_info(; name="subdir/subdir/hello4.txt", datetime=DateTime(2022, 8, 19, 21, 47, 44)),
+]
 
 # Simple tests
 const EMPTY_FILE = joinpath(THIS_DIR, "empty.zip")
@@ -255,6 +271,17 @@ end
                 @test header.info == ZIP64_FILE_INFO
                 @test header.offset == 0
                 @test header.comment == ""
+            end
+        end
+
+        @testset "Multi archive" begin
+            open(MULTI_FILE, "r") do f
+                skip(f, 0x371)
+                for cmp in MULTI_INFO
+                    skip(f, 0x4)
+                    header = read(f, ZipStreams.CentralDirectoryHeader)
+                    @test header.info == cmp
+                end
             end
         end
     end
