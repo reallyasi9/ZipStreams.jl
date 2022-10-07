@@ -288,7 +288,52 @@ end
 end
 
 @testset "Input archive construction" begin
-    
+    @testset "Empty archive" begin
+        buffer = IOBuffer()
+        archive = zipsink(buffer)
+        close(archive)
+    end
+
+    @testset "Write files" begin
+        @testset "Single file, uncompressed" begin
+            buffer = IOBuffer()
+            archive = zipsink(buffer)
+            f = open(archive, "hello.txt"; compression=:store)
+            @test write(f, "Hello, Julia!") == 13
+            close(f)
+            close(archive)
+            @test length(buffer.data) == 173
+
+            buffer = IOBuffer(buffer.data)
+            skip(buffer, 4)
+            header = read(buffer, ZipStreams.LocalFileHeader)
+            println(header)
+            @test header.info.compressed_size == 0
+            @test header.info.compression_method == 0
+            @test header.info.crc32 == ZipStreams.CRC32_INIT
+            @test header.info.descriptor_follows == true
+            @test header.info.name == "hello.txt"
+            @test header.info.uncompressed_size == 0
+            @test header.info.utf8 == true
+            @test header.info.zip64 == true
+        end
+        @testset "Single file, compressed" begin
+            buffer = IOBuffer()
+            archive = zipsink(buffer)
+            f = open(archive, "hello.txt"; compression=:deflate)
+            write(f, "Hello, Julia!")
+            close(f)
+            close(archive)
+        end
+        @testset "Single file, subdirectory" begin
+            buffer = IOBuffer()
+            archive = zipsink(buffer)
+            f = open(archive, "subdir/hello.txt")
+            write(f, "Hello, Julia!")
+            close(f)
+            close(archive)
+        end
+    end
 end
 
 @testset "Archive iteration" begin
