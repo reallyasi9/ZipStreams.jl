@@ -52,35 +52,46 @@ when you have finished writing to it.
 ```julia
 ```
 """
-function Base.close(zipfile::ZipFileOutputStream)
+function Base.close(zipfile::ZipFileOutputStream; uncompressed_size::Union{UInt64,Nothing}=nothing)
     if zipfile._closed
         @debug "File already closed"
         return
     end
-    crc32 = zipfile._crc32
+    crc = zipfile._crc32
     @debug "Flushing writes to file" bytes=zipfile._bytes_written
     write(zipfile.sink, TranscodingStreams.TOKEN_END)
     flush(zipfile.sink)
     stats = TranscodingStreams.stats(zipfile.sink)
     @debug "Stats read from closed sink" stats
     compressed_size = stats.transcoded_out % UInt64
-    uncompressed_size = stats.transcoded_in % UInt64
+    if isnothing(uncompressed_size)
+        uc_size = stats.transcoded_in % UInt64
+    else
+        uc_size = uncompressed_size
+    end
     # FIXME: Not atomic!
     # NOTE: not standard per se, but more common than not to use a signature here.
-    writele(zipfile._raw_sink, SIG_DATA_DESCRIPTOR)
-    writele(zipfile._raw_sink, crc32)
-    # Force Zip64 no matter the actual sizes
-    writele(zipfile._raw_sink, compressed_size)
-    writele(zipfile._raw_sink, uncompressed_size)
+    if zipfile.info.descriptor_follows
+        writele(zipfile._raw_sink, SIG_DATA_DESCRIPTOR)
+        writele(zipfile._raw_sink, crc)
+        # Force Zip64 no matter the actual sizes
+        writele(zipfile._raw_sink, compressed_size)
+        writele(zipfile._raw_sink, uc_size)
+    else
+        if crc != zipfile.info.crc32 || compressed_size != zipfile.info.compressed_size || uc_size != zipfile.info.uncompressed_size
+            @error "File data written to archive does not match local header data" crc32_header=zipfile.info.crc32 crc32_file=crc csize_header=zipfile.info.compressed_size csize_file=compressed_size usize_header=zipfile.info.uncompressed_size usize_file=uncompressed_size
+            error("file data written to archive does not match local header data")
+        end
+    end
 
     # Only force Zip64 in the Central Directory if necessary
-    zip64 = zipfile.offset >= typemax(UInt32) || compressed_size >= typemax(UInt32) || uncompressed_size >= typemax(UInt32)
+    zip64 = zipfile.offset >= typemax(UInt32) || compressed_size >= typemax(UInt32) || uc_size >= typemax(UInt32)
     directory_info = ZipFileInformation(
         zipfile.info.compression_method,
-        uncompressed_size,
+        uc_size,
         compressed_size,
         now(),
-        crc32,
+        crc,
         zipfile.info.name,
         true,
         zipfile.info.utf8,
@@ -151,6 +162,7 @@ mutable struct ZipArchiveOutputStream{S<:IO} <: IO
 
     _folders_created::Set{String}
     _open_file::Ref{ZipFileOutputStream}
+    _is_closed::Bool
 end
 
 """
@@ -204,6 +216,7 @@ function zipsink(
         comment,
         Set{String}(),
         Ref{ZipStreams.ZipFileOutputStream}(),
+        false,
     )
     finalizer(close, z)
     return z
@@ -214,8 +227,8 @@ function zipsink(f::F, args...; kwargs...) where {F<:Function}
     return f(zs)
 end
 
-function Base.close(archive::ZipArchiveOutputStream)
-    if !isopen(archive.sink)
+function Base.close(archive::ZipArchiveOutputStream; close_sink::Bool=true)
+    if archive._is_closed
         return
     end
     # close the potentially open file
@@ -226,7 +239,11 @@ function Base.close(archive::ZipArchiveOutputStream)
     stat = TranscodingStreams.stats(archive.sink)
     startpos = stat.transcoded_out
     write_directory(archive.sink, archive.directory; startpos=startpos, comment=archive.comment, utf8=archive.utf8)
-    close(archive.sink)
+    if close_sink
+        close(archive.sink)
+    end
+    archive._is_closed = true
+    return
 end
 
 """
@@ -328,6 +345,10 @@ to instruct decompression programs to read these strings as such. If `false`, th
 default IBM437 encoding will be used. This does not affect the file data itself.
 - `comment::AbstractString = ""`: Comment metadata to add to the archive about the
 file. This does not affect the file data itself.
+- `data = nothing`: Data to write for all-at-once file writing. If this is not
+`nothing`, its will be written to the archive (using `write(io, data)`) all at
+once rather than streaming. The file object will be closed immediately, and
+`nothing` will be returned.
 
 !!! warning "Duplicate file names"
 
@@ -356,6 +377,10 @@ function Base.open(
     compression::Symbol = :deflate,
     utf8::Bool = true,
     comment::AbstractString = "",
+    uncompressed_size::UInt64 = UInt64(0),
+    compressed_size::UInt64 = UInt64(0),
+    crc::UInt32 = CRC32_INIT,
+    precalculated::Bool = false,
 )
     # warn if file already open
     if isassigned(archive._open_file)
@@ -378,26 +403,35 @@ function Base.open(
     flush(archive)
     stat = TranscodingStreams.stats(archive.sink)
     offset = stat.transcoded_out % UInt64
+    # Branch: if writing all at once, use precalculated size
+    if precalculated
+        use_descriptor = false
+        zip64 = offset >= typemax(UInt32) || uncompressed_size >= typemax(UInt32) || compressed_size >= typemax(UInt32)
+    else
+        use_descriptor = true
+        zip64 = true # always use Zip64 if size is unknown
+    end
     info = ZipFileInformation(
         ccode,
-        0,
-        0,
+        uncompressed_size,
+        compressed_size,
         now(),
-        0,
+        crc,
         fname,
-        true,
+        use_descriptor,
         utf8,
-        true, # because the final file size is unknown, always use Zip64.
+        zip64,
     )
     local_file_header = LocalFileHeader(info)
     write(archive, local_file_header)
 
     # 2. set up compression stream
-    if compression == :deflate
-        codec = DeflateCompressor()
-    elseif compression == :store
+    if precalculated || compression == :store
         codec = Noop()
+    elseif compression == :deflate
+        codec = DeflateCompressor()
     else
+        # How did I end up here?
         error("undefined compression type $compression")
     end
     filesink = TranscodingStream(codec, archive)
@@ -417,14 +451,24 @@ function Base.open(
     archive._open_file[] = zipfile
 
     # 5. set up finalizer
-    finalizer(close, zipfile)
+    if precalculated
+        finalizer(x -> close(x; uncompressed_size=uncompressed_size), zipfile)
+    else
+        finalizer(close, zipfile)
+    end
 
-    # 6. return file object
+    # 6. return the file object
     return zipfile
+
+end
+
+function Base.open(f::F, archive::ZipArchiveOutputStream, fname::AbstractString; kwargs...) where {F<:Function}
+    zf = open(archive, fname; kwargs...)
+    return f(zf)
 end
 
 """
-    write_file(sink, fname, data; [keyword arguments]) -> Int
+    write_file(sink, fname, data; [keyword arguments])
 
 Archive data to a new file in the archive all at once.
 
@@ -432,16 +476,37 @@ This is a convenience method that will create a new file in the archive with nam
 `filename` and write all of `data` to that file. The `data` argument can be anything
 for which the method `write(io, data)` is defined.
 
+Returns nothing.
+
 Keyword arguments are the same as those accepted by `open(sink, fname)`.
 """
 function write_file(
     archive::ZipArchiveOutputStream,
     fname::AbstractString,
     data;
-    kwargs...)
-    n_written = open(archive, fname; kwargs...) do io
-        write(io, data)
+    compression::Symbol = :deflate,
+    kwargs...
+    )
+
+    # 0. Compress the data if necessary
+    buffer = IOBuffer()
+    write(buffer, data)
+    raw_data = take!(buffer)
+    uncompressed_size = sizeof(raw_data) % UInt64
+    if compression == :deflate
+        compressed_data = transcode(DeflateCompressor, raw_data)
+    elseif compression == :store
+        compressed_data = raw_data
+    else
+        error("undefined compression type $compression")
     end
+    compressed_size = sizeof(compressed_data) % UInt64
+    crc = crc32(compressed_data)
+
+    n_written = open(archive, fname; precalculated=true, uncompressed_size=uncompressed_size, compressed_size=compressed_size, crc=crc, kwargs...) do io
+        write(io, compressed_data)
+    end
+
     return n_written
 end
 

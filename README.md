@@ -150,3 +150,4 @@ that package.
 * Mock read-only and write-only streams for testing
 * Add all-at-once file writing
 * Add filesystem-like `open` function for reading.
+* Make the user responsible for closing files if `open() do x ... end` syntax is not used.
