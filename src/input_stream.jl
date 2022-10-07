@@ -199,17 +199,25 @@ blocks.
 ```jldoctest
 ```
 """
-function zipsource(io::IO)
+function zipsource(io::IO; close_on_delete::Bool=true)
     stream = TranscodingStreams.NoopStream(io)
     zs = ZipArchiveInputStream(stream, ZipFileInformation[], UInt64[], false)
-    finalizer(close, zs)
+    if close_on_delete
+        finalizer(close, zs)
+    end
     return zs
 end
-zipsource(fname::AbstractString) = zipsource(Base.open(fname, "r"))
-zipsource(f::F, x) where {F<:Function} = zipsource(x) |> f
+zipsource(fname::AbstractString; kwrags...) = zipsource(Base.open(fname, "r"); kwargs...)
+function zipsource(f::F, x; kwargs...) where {F<:Function}
+    zs = zipsource(x; kwargs...)
+    return f(zs)
+end
 
-open(fname::AbstractString) = zipsource(fname)
-open(f::F, x) where {F<:Function} = zipsource(x) |> f
+open(fname::AbstractString; kwargs...) = zipsource(fname; kwargs...)
+function open(f::F, x; kwargs...) where {F<:Function}
+    zs = zipsource(x; kwargs...)
+    return f(zs)
+end
 
 Base.eof(zs::ZipArchiveInputStream) = eof(zs.source)
 Base.isopen(zs::ZipArchiveInputStream) = isopen(zs.source)

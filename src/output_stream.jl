@@ -209,9 +209,15 @@ function zipsink(
     return z
 end
 
-zipsink(f::F, args...; kwargs...) where {F<:Function} = zipsink(args...; kwargs...) |> f
+function zipsink(f::F, args...; kwargs...) where {F<:Function}
+    zs = zipsink(args...; kwargs...)
+    return f(zs)
+end
 
 function Base.close(archive::ZipArchiveOutputStream)
+    if !isopen(archive.sink)
+        return
+    end
     # close the potentially open file
     if isassigned(archive._open_file)
         close(archive._open_file[])
@@ -415,6 +421,28 @@ function Base.open(
 
     # 6. return file object
     return zipfile
+end
+
+"""
+    write_file(sink, fname, data; [keyword arguments]) -> Int
+
+Archive data to a new file in the archive all at once.
+
+This is a convenience method that will create a new file in the archive with name
+`filename` and write all of `data` to that file. The `data` argument can be anything
+for which the method `write(io, data)` is defined.
+
+Keyword arguments are the same as those accepted by `open(sink, fname)`.
+"""
+function write_file(
+    archive::ZipArchiveOutputStream,
+    fname::AbstractString,
+    data;
+    kwargs...)
+    n_written = open(archive, fname; kwargs...) do io
+        write(io, data)
+    end
+    return n_written
 end
 
 Base.flush(za::ZipArchiveOutputStream) = flush(za.sink)
