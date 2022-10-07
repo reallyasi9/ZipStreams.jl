@@ -201,13 +201,13 @@ function Base.read(io::IO, ::Type{LocalFileHeader})
         # MUST have 0xffffffff for sizes in original record per 4.5.3.
         if uncompressed_size != typemax(UInt32)
             error(
-                "Zip64-encoded does not signal uncompressed size: expected $(typemax(UInt32)), got $(uncompressed_size)",
+                "Zip64-encoded file does not signal uncompressed size: expected $(typemax(UInt32)), got $(uncompressed_size)",
             )
         end
         uncompressed_size = readle(io, UInt64)
         if compressed_size != typemax(UInt32)
             error(
-                "Zip64-encoded does not signal compressed size: expected $(typemax(UInt32)), got $(compressed_size)",
+                "Zip64-encoded file does not signal compressed size: expected $(typemax(UInt32)), got $(compressed_size)",
             )
         end
         compressed_size = readle(io, UInt64)
