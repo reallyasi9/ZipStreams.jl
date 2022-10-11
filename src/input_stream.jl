@@ -73,7 +73,7 @@ end
 
 function Base.read(zf::ZipFileInputStream, ::Type{UInt8})
     x = read(zf.source, UInt8)
-    zf._crc32 = crc32(x, zf._crc32)
+    zf._crc32 = crc32([x], zf._crc32)
     return x
 end
 
@@ -98,6 +98,7 @@ Base.isreadable(zf::ZipFileInputStream) = isreadable(zf.source)
 Base.iswritable(::ZipFileInputStream) = false
 Base.isopen(zf::ZipFileInputStream) = isopen(zf.source)
 Base.bytesavailable(zf::ZipFileInputStream) = bytesavailable(zf.source)
+Base.close(::ZipFileInputStream) = nothing # closing doesn't do anything
 
 """
     ZipArchiveInputStream

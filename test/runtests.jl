@@ -5,18 +5,26 @@ using CodecZlib
 using ZipStreams
 using Random
 
-# struct ForwardReadOnlyIO{S <: IO} <: IO
-#     io::S
-# end
-# read(f::ForwardReadOnlyIO, UInt8) = read(f.io, UInt8)
-# seek(f::ForwardReadOnlyIO, n::Int) = n < 0 ? error("backward seeking forbidden") : seek(f.io, n)
-# close(f::ForwardReadOnlyIO) = close(f.io)
+import Base: bytesavailable, close, eof, isopen, read, seek, unsafe_read, unsafe_write
 
-# struct ForwardWriteOnlyIO{S <: IO} <: IO
-#     io::S
-# end
-# unsafe_write(f::ForwardWriteOnlyIO, p::Ptr{UInt8}, n::Int) = unsafe_write(f.io, p, n)
-# close(f::ForwardWriteOnlyIO) = close(f.io)
+struct ForwardReadOnlyIO{S <: IO} <: IO
+    io::S
+end
+Base.read(f::ForwardReadOnlyIO, ::Type{UInt8}) = read(f.io, UInt8)
+Base.unsafe_read(f::ForwardReadOnlyIO, p::Ptr{UInt8}, n::UInt) = unsafe_read(f.io, p, n)
+Base.seek(f::ForwardReadOnlyIO, n::Int) = n < 0 ? error("backward seeking forbidden") : seek(f.io, n)
+Base.close(f::ForwardReadOnlyIO) = close(f.io)
+Base.isopen(f::ForwardReadOnlyIO) = isopen(f.io)
+Base.eof(f::ForwardReadOnlyIO) = eof(f.io)
+Base.bytesavailable(f::ForwardReadOnlyIO) = bytesavailable(f.io)
+
+struct ForwardWriteOnlyIO{S <: IO} <: IO
+    io::S
+end
+Base.unsafe_write(f::ForwardWriteOnlyIO, p::Ptr{UInt8}, n::UInt) = unsafe_write(f.io, p, n)
+Base.close(f::ForwardWriteOnlyIO) = close(f.io)
+Base.isopen(f::ForwardWriteOnlyIO) = isopen(f.io)
+# Base.eof(f::ForwardWriteOnlyIO) = eof(f.io)
 
 const THIS_DIR = dirname(@__FILE__)
 
@@ -398,18 +406,17 @@ end
 end
 
 
-# @testset "Mock stream IO" begin
-#     buffer = IOBuffer()
-#     wo = ForwardWriteOnlyIO(buffer)
-#     sink = zipsink(wo)
-#     write_file(sink, "hello.txt", FILE_CONTENT)
-#     close(sink; close_sink=false)
+@testset "Mock stream IO" begin
+    buffer = IOBuffer()
+    wo = ForwardWriteOnlyIO(buffer)
+    sink = zipsink(wo)
+    write_file(sink, "hello.txt", FILE_CONTENT)
+    close(sink; close_sink=false)
 
-#     seekstart(buffer)
-#     ro = ForwardReadOnlyIO(buffer)
-#     source = zipsource(ro)
-#     zf = nextfile(source)
-#     @test read(zf, String) == FILE_CONTENT
-#     close(zf)
-#     close(source)
-# end
+    seekstart(buffer)
+    ro = ForwardReadOnlyIO(buffer)
+    source = zipsource(ro)
+    zf = nextfile(source)
+    @test read(zf, String) == FILE_CONTENT
+    close(source)
+end
