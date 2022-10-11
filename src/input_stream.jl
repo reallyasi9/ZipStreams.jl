@@ -208,13 +208,13 @@ function zipsource(io::IO; close_on_delete::Bool=true)
     return zs
 end
 zipsource(fname::AbstractString; kwrags...) = zipsource(Base.open(fname, "r"); kwargs...)
-function zipsource(f::F, x; kwargs...) where {F<:Function}
+function zipsource(f::F, x::Union{AbstractString,IO}; kwargs...) where {F<:Function}
     zs = zipsource(x; kwargs...)
     return f(zs)
 end
 
 open(fname::AbstractString; kwargs...) = zipsource(fname; kwargs...)
-function open(f::F, x; kwargs...) where {F<:Function}
+function open(f::F, x::Union{AbstractString,IO}; kwargs...) where {F<:Function}
     zs = zipsource(x; kwargs...)
     return f(zs)
 end

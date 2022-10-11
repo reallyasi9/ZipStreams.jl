@@ -5,10 +5,24 @@ using CodecZlib
 using ZipStreams
 using Random
 
+# struct ForwardReadOnlyIO{S <: IO} <: IO
+#     io::S
+# end
+# read(f::ForwardReadOnlyIO, UInt8) = read(f.io, UInt8)
+# seek(f::ForwardReadOnlyIO, n::Int) = n < 0 ? error("backward seeking forbidden") : seek(f.io, n)
+# close(f::ForwardReadOnlyIO) = close(f.io)
+
+# struct ForwardWriteOnlyIO{S <: IO} <: IO
+#     io::S
+# end
+# unsafe_write(f::ForwardWriteOnlyIO, p::Ptr{UInt8}, n::Int) = unsafe_write(f.io, p, n)
+# close(f::ForwardWriteOnlyIO) = close(f.io)
+
 const THIS_DIR = dirname(@__FILE__)
 
 # All test files have the same content
 const FILE_CONTENT = "Hello, Julia!"
+const DEFLATED_FILE_CONTENT = transcode(DeflateCompressor, FILE_CONTENT)
 function file_info(; name::AbstractString="hello.txt", descriptor::Bool=false, utf8::Bool=false, zip64::Bool=false, datetime::DateTime=DateTime(2022, 8, 18, 23, 21, 38), compression::UInt16=ZipStreams.COMPRESSION_STORE)
     uc_size = 13 % UInt64
     if compression == ZipStreams.COMPRESSION_DEFLATE
@@ -299,7 +313,7 @@ end
             buffer = IOBuffer()
             archive = zipsink(buffer)
             f = open(archive, "hello.txt"; compression=:store)
-            @test write(f, "Hello, Julia!") == 13
+            @test write(f, FILE_CONTENT) == 13
             close(f)
             close(archive; close_sink=false)
             @test buffer.size == 72
@@ -320,7 +334,7 @@ end
             buffer = IOBuffer()
             archive = zipsink(buffer)
             f = open(archive, "hello.txt"; compression=:deflate)
-            @test write(f, "Hello, Julia!") == 13
+            @test write(f, FILE_CONTENT) == 13
             close(f)
             close(archive; close_sink=false)
             @test buffer.size == 74
@@ -341,26 +355,26 @@ end
             buffer = IOBuffer()
             archive = zipsink(buffer)
             f = open(archive, "subdir/hello.txt")
-            write(f, "Hello, Julia!")
+            write(f, FILE_CONTENT)
             close(f)
             close(archive)
         end
         @testset "Write at once" begin
             buffer = IOBuffer()
             archive = zipsink(buffer)
-            write_file(archive, "hello.txt", "Hello, Julia!")
+            write_file(archive, "hello.txt", FILE_CONTENT)
             close(archive; close_sink=false)
-            @test buffer.size == 42 # ?
+            @test buffer.size == 54
 
             readme = IOBuffer(take!(buffer))
             skip(readme, 4)
             header = read(readme, ZipStreams.LocalFileHeader)
-            @test header.info.compressed_size == 13
-            @test header.info.compression_method == ZipStreams.COMPRESSION_STORE
-            @test header.info.crc32 == ZipStreams.crc32(readme.data)
+            @test header.info.compressed_size == sizeof(DEFLATED_FILE_CONTENT)
+            @test header.info.compression_method == ZipStreams.COMPRESSION_DEFLATE
+            @test header.info.crc32 == ZipStreams.crc32(DEFLATED_FILE_CONTENT)
             @test header.info.descriptor_follows == false
             @test header.info.name == "hello.txt"
-            @test header.info.uncompressed_size == 13
+            @test header.info.uncompressed_size == sizeof(FILE_CONTENT)
             @test header.info.utf8 == true
             @test header.info.zip64 == false
         end
@@ -382,3 +396,20 @@ end
         end
     end
 end
+
+
+# @testset "Mock stream IO" begin
+#     buffer = IOBuffer()
+#     wo = ForwardWriteOnlyIO(buffer)
+#     sink = zipsink(wo)
+#     write_file(sink, "hello.txt", FILE_CONTENT)
+#     close(sink; close_sink=false)
+
+#     seekstart(buffer)
+#     ro = ForwardReadOnlyIO(buffer)
+#     source = zipsource(ro)
+#     zf = nextfile(source)
+#     @test read(zf, String) == FILE_CONTENT
+#     close(zf)
+#     close(source)
+# end

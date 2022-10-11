@@ -52,7 +52,7 @@ when you have finished writing to it.
 ```julia
 ```
 """
-function Base.close(zipfile::ZipFileOutputStream; uncompressed_size::Union{UInt64,Nothing}=nothing)
+function Base.close(zipfile::ZipFileOutputStream; _uncompressed_size::Union{UInt64,Nothing}=nothing)
     if zipfile._closed
         @debug "File already closed"
         return
@@ -64,10 +64,10 @@ function Base.close(zipfile::ZipFileOutputStream; uncompressed_size::Union{UInt6
     stats = TranscodingStreams.stats(zipfile.sink)
     @debug "Stats read from closed sink" stats
     compressed_size = stats.transcoded_out % UInt64
-    if isnothing(uncompressed_size)
+    if isnothing(_uncompressed_size)
         uc_size = stats.transcoded_in % UInt64
     else
-        uc_size = uncompressed_size
+        uc_size = _uncompressed_size
     end
     # FIXME: Not atomic!
     # NOTE: not standard per se, but more common than not to use a signature here.
@@ -79,7 +79,7 @@ function Base.close(zipfile::ZipFileOutputStream; uncompressed_size::Union{UInt6
         writele(zipfile._raw_sink, uc_size)
     else
         if crc != zipfile.info.crc32 || compressed_size != zipfile.info.compressed_size || uc_size != zipfile.info.uncompressed_size
-            @error "File data written to archive does not match local header data" crc32_header=zipfile.info.crc32 crc32_file=crc csize_header=zipfile.info.compressed_size csize_file=compressed_size usize_header=zipfile.info.uncompressed_size usize_file=uncompressed_size
+            @error "File data written to archive does not match local header data" crc32_header=zipfile.info.crc32 crc32_file=crc csize_header=zipfile.info.compressed_size csize_file=compressed_size usize_header=zipfile.info.uncompressed_size usize_file=uc_size
             error("file data written to archive does not match local header data")
         end
     end
@@ -218,13 +218,14 @@ function zipsink(
         Ref{ZipStreams.ZipFileOutputStream}(),
         false,
     )
-    finalizer(close, z)
     return z
 end
 
 function zipsink(f::F, args...; kwargs...) where {F<:Function}
     zs = zipsink(args...; kwargs...)
-    return f(zs)
+    val = f(zs)
+    close(zs)
+    return val
 end
 
 function Base.close(archive::ZipArchiveOutputStream; close_sink::Bool=true)
@@ -377,10 +378,10 @@ function Base.open(
     compression::Symbol = :deflate,
     utf8::Bool = true,
     comment::AbstractString = "",
-    uncompressed_size::UInt64 = UInt64(0),
-    compressed_size::UInt64 = UInt64(0),
-    crc::UInt32 = CRC32_INIT,
-    precalculated::Bool = false,
+    _uncompressed_size::UInt64 = UInt64(0),
+    _compressed_size::UInt64 = UInt64(0),
+    _crc::UInt32 = CRC32_INIT,
+    _precalculated::Bool = false,
 )
     # warn if file already open
     if isassigned(archive._open_file)
@@ -404,19 +405,19 @@ function Base.open(
     stat = TranscodingStreams.stats(archive.sink)
     offset = stat.transcoded_out % UInt64
     # Branch: if writing all at once, use precalculated size
-    if precalculated
+    if _precalculated
         use_descriptor = false
-        zip64 = offset >= typemax(UInt32) || uncompressed_size >= typemax(UInt32) || compressed_size >= typemax(UInt32)
+        zip64 = offset >= typemax(UInt32) || _uncompressed_size >= typemax(UInt32) || _compressed_size >= typemax(UInt32)
     else
         use_descriptor = true
         zip64 = true # always use Zip64 if size is unknown
     end
     info = ZipFileInformation(
         ccode,
-        uncompressed_size,
-        compressed_size,
+        _uncompressed_size,
+        _compressed_size,
         now(),
-        crc,
+        _crc,
         fname,
         use_descriptor,
         utf8,
@@ -426,7 +427,7 @@ function Base.open(
     write(archive, local_file_header)
 
     # 2. set up compression stream
-    if precalculated || compression == :store
+    if _precalculated || compression == :store
         codec = Noop()
     elseif compression == :deflate
         codec = DeflateCompressor()
@@ -450,21 +451,16 @@ function Base.open(
     # 4. set file as open (clears the previous open reference)
     archive._open_file[] = zipfile
 
-    # 5. set up finalizer
-    if precalculated
-        finalizer(x -> close(x; uncompressed_size=uncompressed_size), zipfile)
-    else
-        finalizer(close, zipfile)
-    end
-
-    # 6. return the file object
+    # 5. return the file object
     return zipfile
 
 end
 
 function Base.open(f::F, archive::ZipArchiveOutputStream, fname::AbstractString; kwargs...) where {F<:Function}
-    zf = open(archive, fname; kwargs...)
-    return f(zf)
+    zf = Base.open(archive, fname; kwargs...)
+    val = f(zf)
+    close(zf)
+    return val
 end
 
 """
@@ -503,9 +499,9 @@ function write_file(
     compressed_size = sizeof(compressed_data) % UInt64
     crc = crc32(compressed_data)
 
-    n_written = open(archive, fname; precalculated=true, uncompressed_size=uncompressed_size, compressed_size=compressed_size, crc=crc, kwargs...) do io
-        write(io, compressed_data)
-    end
+    io = Base.open(archive, fname; _precalculated=true, _uncompressed_size=uncompressed_size, _compressed_size=compressed_size, _crc=crc, kwargs...)
+    n_written = write(io, compressed_data)
+    close(io; _uncompressed_size=uncompressed_size)
 
     return n_written
 end
