@@ -230,7 +230,7 @@ Base.read(zs::ZipArchiveInputStream, ::Type{UInt8}) = read(zs.source, UInt8)
 Base.unsafe_read(zs::ZipArchiveInputStream, p::Ptr{UInt8}, nb::UInt64) = unsafe_read(zs.source, p, nb)
 function Base.position(zs::ZipArchiveInputStream)
     stat = TranscodingStreams.stats(zs.source)
-    return stat.transcoded_in
+    return stat.in
 end
 
 function Base.skip(zs::ZipArchiveInputStream, n::Integer)
