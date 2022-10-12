@@ -292,6 +292,10 @@ function validate(zs::ZipArchiveInputStream)
             @error "central directory offset does not match local file offset" i cd_info.offset zs.offsets[i]
             error("discrepancy detected in central directory offset $i")
         end
+        # If this isn't the end of the file, skip the next 4 signature bytes
+        if !eof(zs.source)
+            skip(zs.source, 4)
+        end
     end
     if ncd != length(zs.directory)
         @error "Central Directory had a different number of headers than detected in Local Files" n_local_files=length(zs.directory) n_central_directory=ncd
