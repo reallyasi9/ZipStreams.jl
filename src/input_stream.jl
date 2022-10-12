@@ -334,8 +334,7 @@ function Base.iterate(zs::ZipArchiveInputStream, state::Int=0)
 
     # add the local file header to the directory
     header = read(zs, LocalFileHeader)
-    @debug "Read local file header" header.info
-    @debug "Adding header to central directory"
+    @debug "Read local file header" header.info offset
     push!(zs.directory, header.info)
     push!(zs.offsets, offset)
 
