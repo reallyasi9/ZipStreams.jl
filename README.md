@@ -167,6 +167,82 @@ end
 @assert isopen(io) == false
 ```
 
+#### Verifying the content of ZIP archives
+
+A ZIP archive stores file sizes and checksums in two of three locations: one of 
+either immediately before the archived file data (in the "Local File Header")
+or immediately after the archived file data (in the "Data Descriptor"), and always
+at the end of the file (in the "Central Directory"). Because the Central Directory
+is considered the ground truth, the Local File Header and Data Descriptor may report
+inaccurate values. To verify that the content of the file matches the values in the
+Local File Header, use the `validate` method on the archived file. To verify that
+all file content in the archive matches the values in the Central Directory, use
+the `validate` method on the archive itself. These methods will throw an error if
+they detect any inconsitencies.
+
+For example, to validate the data in a single file stored in the archive:
+
+```julia
+using ZipStreams
+
+zipsource("archive.zip") do zs
+    f = nextfile(zs)
+    validate(f) # throws if there is an inconsistency
+end
+```
+
+To validate the data in all of the _remaining_ files in the archive:
+
+```julia
+using ZipStreams
+
+io = open("archive.zip")
+zipsource(io) do zs
+    validate(zs) # validate all files and the archive itself
+end
+
+seekstart(io)
+zipsource(io) do zs
+    f = nextfile(zs) # read the first file
+    validate(zs) # validate all files except the first!
+end
+
+close(io)
+```
+
+The `validate` methods consume the data in the source and return vectors of
+raw bytes. When called on an archived file, it returns a single `Vector{UInt8}`.
+When called on the archive itself, it returns a `Vector{Vector{UInt8}}` with
+the remaining unread file data in archive order, _excluding any files that have already
+been read by iterating or with `nextfile`_.
+
+```julia
+using ZipStreams
+
+zs = zipsource("archive.zip")
+f1 = nextfile(zs)
+data1 = validate(f1) # contains all the file data as raw bytes
+@assert typeof(data1) == Vector{UInt8}
+close(zs)
+
+zs = zipsource("archive.zip")
+f2 = nextfile(zs)
+println(readline(f2)) # read a line off the file first
+data2 = validate(f2) # contains the remaining file data excluding the first line!
+@assert typeof(data2) == Vector{UInt8}
+@assert sizeof(data2) < sizeof(data1)
+close(zs)
+
+zs = zipsource("archive.zip")
+all_data = validate(zs) # returns a Vector{Vector{UInt8}} of all remaining files
+@assert all_data[1] == data1
+close(zs)
+```
+
+
+```
+
+Note that these methods consume the data in the file or archive. `validate`
 
 
 ```julia
