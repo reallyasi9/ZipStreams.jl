@@ -70,7 +70,9 @@ You have been warned!
 Until the package is published, install via the Julia package manager with
 `Pkg.add(; url="https://github.com/reallyasi9/ZipStreams.jl")`.
 
-You can wrap any Julia `IO` object with the `zipsource` function. The returned
+### Reading archives with `zipsource`
+
+You can wrap any Julia readable `IO` object with the `zipsource` function. The returned
 struct can be iterated to read archived files in archive order. Information about
 each file is stored in the `.info` property of the struct returned from the
 iterator. The struct returned from the iterator is readable like any standard
@@ -78,10 +80,17 @@ Julia `IO` object.
 
 Here are some examples:
 
+#### Iterating through file from an archive on disk
+
+This is perhaps the most common way to work with ZIP archives: reading them from disk and
+doing things with the contained files. Because `zipsource` reads from the beginning of the
+file to the end, you can only iterate through files in archive order and cannot randomly
+access files. Here is an example of how to work with this kind of file iteration:
+
 ```julia
 using ZipStreams
 
-# open an archive
+# open an archive from an IO object
 open("archive.zip") do io
     zs = zipsource(io)
 
@@ -97,7 +106,70 @@ open("archive.zip") do io
         println(read(f, String))
     end
 end
+```
 
+You can use the `nextfile` method to access the next file in the archive without iterating
+in a loop. The method returns `nothing` if it reaches the end of the archive.
+
+```julia
+using ZipStreams
+
+open("archive.zip") do io
+    zs = zipsource(io)
+    f = nextfile(zs) # the first file in the archive, or nothing if there are no files archived
+    # ...
+    f = nextfile(zs) # the next file in the archive, or nothing if there was only one file
+    # ...
+end
+```
+
+Because reading ZIP files from a file on disk is a common use case, a convenience
+method taking a file name argument is provided:
+
+```julia
+using ZipStreams
+
+zs = zipsource("archive.zip") # Note: the caller is responsible for closing this to free the file handle
+# ... 
+close(zs)
+```
+
+In addition, a method that mimics Julia's `open() do x ... end` behavior is
+included for managing the lifetime of any file handles opened by `zipsource`:
+
+```julia
+using ZipStreams
+
+zipsource("archive.zip") do zs
+    # ...
+end # file handle is automatically closed at the end of the block
+```
+
+The same method is defined for `IO` arguments, but it works slightly differently:
+the object passed is _not_ closed when the block ends. It assumes that the
+caller is responsible for the `IO` object's lifetime. However, manually calling `close`
+on the source will always close the wrapped `IO` object. Here is an example:
+
+```julia
+using ZipStreams
+
+io = open("archive.zip")
+zipsource(io) do zs
+    # ...
+end
+@assert isopen(io) == true
+
+seekstart(io)
+zipsource(io) do zs
+    # ...
+    close(zs) # called manually
+end
+@assert isopen(io) == false
+```
+
+
+
+```julia
 # open an enormous file from a network stream
 using BufferedStreams
 using HTTP

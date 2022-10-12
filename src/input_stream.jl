@@ -179,13 +179,17 @@ Create a read-only lazy streamable representation of a Zip archive.
 The first form returns a `ZipArchiveInputStream` wrapped around `io` that allows
 the user to extract files as they are read from the stream by iterating over the
 returned object. `io` can be an object that inherits from `Base.IO` (technically
-only requiring `read`, `eof`, and `skip` to be defined) or an `AbstractString`
-file name, which will open the file in read-only mode and wrap that `IOStream`.
+only requiring `read`, `eof`, `isopen`, `close`, and `bytesavailable` to be
+defined) or an `AbstractString` file name, which will open the file in read-only
+mode and wrap that `IOStream`.
 
 The second form takes a unary function as the first argument. The constructed
 `ZipArchiveInputStream` object will be passed to the function and the results of
 the function will be returned to the user. This allows compatability with `do`
-blocks.
+blocks. If `io` is an `AbstractString` file name, the file will be automatically
+closed when the block exits. If `io` is a `Base.IO` object as described above, it
+will _not_ be closed when the block exits, allowing the caller to have control over
+the lifetime of the argument.
 
 !!! warning "Reading before knowing where files end can be dangerous!"
 
@@ -200,24 +204,21 @@ blocks.
 ```jldoctest
 ```
 """
-function zipsource(io::IO; close_on_delete::Bool=true)
+function zipsource(io::IO)
     stream = TranscodingStreams.NoopStream(io)
     zs = ZipArchiveInputStream(stream, ZipFileInformation[], UInt64[], false)
-    if close_on_delete
-        finalizer(close, zs)
-    end
     return zs
 end
 zipsource(fname::AbstractString; kwrags...) = zipsource(Base.open(fname, "r"); kwargs...)
-function zipsource(f::F, x::Union{AbstractString,IO}; kwargs...) where {F<:Function}
+function zipsource(f::F, x::IO; kwargs...) where {F<:Function}
     zs = zipsource(x; kwargs...)
     return f(zs)
 end
-
-open(fname::AbstractString; kwargs...) = zipsource(fname; kwargs...)
-function open(f::F, x::Union{AbstractString,IO}; kwargs...) where {F<:Function}
+function zipsource(f::F, x::AbstractString; kwargs...) where {F<:Function}
     zs = zipsource(x; kwargs...)
-    return f(zs)
+    val = f(zs)
+    close(zs)
+    return val
 end
 
 Base.eof(zs::ZipArchiveInputStream) = eof(zs.source)
@@ -236,7 +237,7 @@ function Base.skip(zs::ZipArchiveInputStream, n::Integer)
     if n < 0
         error("stream cannot skip backward")
     end
-    # read and drop on the floor
+    # read and drop on the floor to update position properly
     read(zs.source, n)
     return
 end
@@ -345,7 +346,13 @@ Read the next file in the archive and return a readable `IO` object or `nothing`
 
 This is the same as calling `first(iterate(archive))`.
 """
-nextfile(archive::ZipArchiveInputStream) = first(iterate(archive))
+function nextfile(archive::ZipArchiveInputStream)
+    f = iterate(archive)
+    if isnothing(f)
+        return f
+    end
+    return first(f)
+end
 
 Base.IteratorSize(::Type{ZipArchiveInputStream}) = Base.SizeUnknown()
 Base.IteratorEltype(::Type{ZipArchiveInputStream}) = Base.HasEltype()

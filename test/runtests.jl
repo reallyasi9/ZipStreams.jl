@@ -11,7 +11,7 @@ struct ForwardReadOnlyIO{S <: IO} <: IO
     io::S
 end
 Base.read(f::ForwardReadOnlyIO, ::Type{UInt8}) = read(f.io, UInt8)
-Base.unsafe_read(f::ForwardReadOnlyIO, p::Ptr{UInt8}, n::UInt) = unsafe_read(f.io, p, n)
+# Base.unsafe_read(f::ForwardReadOnlyIO, p::Ptr{UInt8}, n::UInt) = unsafe_read(f.io, p, n)
 Base.seek(f::ForwardReadOnlyIO, n::Int) = n < 0 ? error("backward seeking forbidden") : seek(f.io, n)
 Base.close(f::ForwardReadOnlyIO) = close(f.io)
 Base.isopen(f::ForwardReadOnlyIO) = isopen(f.io)
