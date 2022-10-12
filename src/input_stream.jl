@@ -209,7 +209,7 @@ function zipsource(io::IO)
     zs = ZipArchiveInputStream(stream, ZipFileInformation[], UInt64[], false)
     return zs
 end
-zipsource(fname::AbstractString; kwrags...) = zipsource(Base.open(fname, "r"); kwargs...)
+zipsource(fname::AbstractString; kwargs...) = zipsource(Base.open(fname, "r"); kwargs...)
 function zipsource(f::F, x::IO; kwargs...) where {F<:Function}
     zs = zipsource(x; kwargs...)
     return f(zs)
