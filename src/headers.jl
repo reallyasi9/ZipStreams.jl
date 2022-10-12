@@ -459,7 +459,12 @@ function Base.read(io::IO, ::Type{CentralDirectoryHeader})
 
     # Skip past additional extra data that went unused
     if extra_read < extrafield_length
-        skip(io, extrafield_length - extra_read)
+        bytes_ignored = extrafield_length - extra_read
+        @warn "Trailing data in extra fields will be ignored" bytes_ignored
+        skip(io, bytes_ignored)
+    end
+    if extra_read > extrafield_length
+        @warn "Number of bytes read from extra fields greater than size reported in header: data may be corrupted" extra_read header_reported_size=extrafield_length
     end
 
     (comment, bytes_read) = readstring(io, comment_length; encoding = encoding)
