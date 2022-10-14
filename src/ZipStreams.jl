@@ -21,7 +21,7 @@ end
 """
 module ZipStreams
 
-export nextfile, validate, write_file, zipsink, zipsource
+export next_file, validate, write_file, zipsink, zipsource
 
 include("crc32.jl")
 include("io.jl")

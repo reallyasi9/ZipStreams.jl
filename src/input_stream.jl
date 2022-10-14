@@ -343,13 +343,13 @@ function Base.iterate(zs::ZipArchiveInputStream, state::Int=0)
 end
 
 """
-    nextfile(archive) => Union{IO, Nothing}
+    next_file(archive) => Union{IO, Nothing}
 
 Read the next file in the archive and return a readable `IO` object or `nothing`.
 
 This is the same as calling `first(iterate(archive))`.
 """
-function nextfile(archive::ZipArchiveInputStream)
+function next_file(archive::ZipArchiveInputStream)
     f = iterate(archive)
     if isnothing(f)
         return f

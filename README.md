@@ -108,7 +108,7 @@ open("archive.zip") do io
 end
 ```
 
-You can use the `nextfile` method to access the next file in the archive without iterating
+You can use the `next_file` method to access the next file in the archive without iterating
 in a loop. The method returns `nothing` if it reaches the end of the archive.
 
 ```julia
@@ -116,9 +116,9 @@ using ZipStreams
 
 open("archive.zip") do io
     zs = zipsource(io)
-    f = nextfile(zs) # the first file in the archive, or nothing if there are no files archived
+    f = next_file(zs) # the first file in the archive, or nothing if there are no files archived
     # ...
-    f = nextfile(zs) # the next file in the archive, or nothing if there was only one file
+    f = next_file(zs) # the next file in the archive, or nothing if there was only one file
     # ...
 end
 ```
@@ -186,7 +186,7 @@ For example, to validate the data in a single file stored in the archive:
 using ZipStreams
 
 zipsource("archive.zip") do zs
-    f = nextfile(zs)
+    f = next_file(zs)
     validate(f) # throws if there is an inconsistency
 end
 ```
@@ -203,7 +203,7 @@ end
 
 seekstart(io)
 zipsource(io) do zs
-    f = nextfile(zs) # read the first file
+    f = next_file(zs) # read the first file
     validate(zs) # validate all files except the first!
 end
 
@@ -214,19 +214,19 @@ The `validate` methods consume the data in the source and return vectors of
 raw bytes. When called on an archived file, it returns a single `Vector{UInt8}`.
 When called on the archive itself, it returns a `Vector{Vector{UInt8}}` with
 the remaining unread file data in archive order, _excluding any files that have already
-been read by iterating or with `nextfile`_.
+been read by iterating or with `next_file`_.
 
 ```julia
 using ZipStreams
 
 zs = zipsource("archive.zip")
-f1 = nextfile(zs)
+f1 = next_file(zs)
 data1 = validate(f1) # contains all the file data as raw bytes
 @assert typeof(data1) == Vector{UInt8}
 close(zs)
 
 zs = zipsource("archive.zip")
-f2 = nextfile(zs)
+f2 = next_file(zs)
 println(readline(f2)) # read a line off the file first
 data2 = validate(f2) # contains the remaining file data excluding the first line!
 @assert typeof(data2) == Vector{UInt8}
@@ -239,10 +239,115 @@ all_data = validate(zs) # returns a Vector{Vector{UInt8}} of all remaining files
 close(zs)
 ```
 
+Note that these methods consume the data in the file or archive, as demonstrated in this
+example:
 
+```julia
+using ZipStreams
+
+zs = zipsource("archive.zip")
+validate(zs)
+@assert eof(zs) == true
 ```
 
-Note that these methods consume the data in the file or archive. `validate`
+### Creating archives and writing files with `zipsink`
+
+You can wrap any `IO` object that supports writing bytes (any type that implements
+`unsafe_write(::T, ::Ptr{UInt8}, ::UInt)`) in a special ZIP archive writer with the
+`zipsink` function. The function will return an object that allows creating and writing
+files within the archive. You can then call `open(sink, filename)` using the returned
+object to create a new file in the archive and begin writting to it with standard `IO`
+functions.
+
+This example creates a new ZIP archive file on disk, creates a new file within the archive,
+writes data to the file, then closes the file and archive:
+
+```julia
+using ZipStreams
+
+io = open("new-archive.zip", "w")
+sink = zipsink(io)
+f = open(sink, "hello.txt")
+write(f, "Hello, Julia!")
+close(f)
+close(sink)
+```
+
+Convenience methods are included that create a new file on disk by passing a file name to
+`zipsink` instead of an `IO` object and that run a unary function so that `zipsink` can be
+used like `Base.open() do io ... end`. In addition, the `open(sink, filename)` method can
+also be used like `Base.open() do io ... end`, as this example shows:
+
+```julia
+using ZipStreams
+
+zipsink("new-archive.zip") do sink  # create a new archive on disk and truncate it
+    open(sink, "hello.txt") do f  # create a new file in the archive
+        write(f, "Hello, Julia!")
+    end  # automatically write a Data Descriptor to the archive and close the file
+end  # automatically write the Central Directory and close the archive
+```
+
+Because the data are streamed to the archive, you can only have one file open for writing
+at a time in a given archive. If you try to open a new file before closing the previous
+file, a warning will be printed to the console and the previous file will automatically be
+closed. In addition, any file still open for writing when the archive is closed will
+automatically be closed before the archive is finalized, as this example demonstrates:
+
+```julia
+using ZipStreams
+
+zipsink("new-archive.zip") do sink
+    f1 = open(sink, "hello.txt")
+    write(f1, "Hello, Julia!")
+    f2 = open(sink, "goodbye.txt")  # issues a warning and closes f1 before opening f2
+    write(f2, "Good bye, Julia!")
+end  # automatically closes f2 before closing the archive
+```
+
+#### Writing files to an archive all at once with `write_file`
+
+When you open a file for writing in a ZIP archive using `open(sink, filename)`, writing to
+the file is done in a streaming fashion with a Data Descriptor written at the end of the
+file data when it is closed. If you want to write an entire file to the archive at once,
+you can use the `write_file(sink, filename, data)` method. This method will write file size
+and checksum information to the archive using the Local File Header rather than a Data
+Descriptor. The advantage to this method is that you can turn around and open the archive
+using `zipsource`: when streamed for reading, the Local File Header will report the correct
+file size, allowing proper streaming of the file data. The disadvantages to using this method
+for writing data are that you need to have all of the data you want to write available at
+one time and that both the raw data and the compressed data need to fit in memory at the
+same time. Here are some examples using this method for writing files:
+
+```julia
+using ZipStreams
+
+zipsink("new-archive.zip") do sink
+    open(sink, "hello.txt") do f1
+        write(f1, "Hello, Julia!")  # writes using a Data Descriptor
+    end
+end
+
+try
+    zipsource("new-archive.zip") do source
+        f = next_file(source)  # fails because the size of the file cannot be read from the Local File Header
+    end
+catch e
+    @error "exception caught" e
+end
+
+zipsink("new-archive.zip") do sink
+    text = "Hello, Julia!"
+    write_file(sink, "hello.txt", text)  # writes without a Data Descriptor
+end
+
+zipsource("new-archive.zip") do source
+    f = next_file(source)  # can be streamed with zipsource
+    @assert read(f, String) == "Hello, Julia!"
+end
+```
+
+### Unstreamable reading and writing with `zipfile`
 
 
 ```julia

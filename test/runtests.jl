@@ -390,7 +390,7 @@ end
 end
 
 @testset "Archive iteration" begin
-    @testset "nextfile" begin
+    @testset "next_file" begin
         @testset "Empty archive" begin
 
         end
@@ -416,7 +416,7 @@ end
     seekstart(buffer)
     ro = ForwardReadOnlyIO(buffer)
     source = zipsource(ro)
-    zf = nextfile(source)
+    zf = next_file(source)
     @test read(zf, String) == FILE_CONTENT
     close(source)
 end
