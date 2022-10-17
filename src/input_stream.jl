@@ -352,6 +352,11 @@ function Base.iterate(zs::ZipArchiveInputStream, state::Int=0)
     push!(zs.directory, header.info)
     push!(zs.offsets, offset)
 
+    # if this is a directory, move on to the next file
+    if isdir(header.info)
+        return iterate(zs, state)
+    end
+
     zf = zipfilesource(header.info, zs)
     return (zf, state+1)
 end
