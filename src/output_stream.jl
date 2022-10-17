@@ -368,7 +368,7 @@ function Base.mkpath(ziparchive::ZipArchiveOutputStream, path::AbstractString; c
         return nb
     end
     for i in 1:length(paths)-1
-        p = join(paths[1:i], "/")
+        p = join(paths[1:i], ZIP_PATH_DELIMITER)
         if p ∉ ziparchive._folders_created
             nb += mkdir(ziparchive, p)
         end
@@ -446,12 +446,12 @@ function Base.open(
     end
 
     # 0. check for directories and deal with them accordingly
-    if endswith(fname, "/")
-        error("file names cannot end in '/'")
+    if endswith(fname, ZIP_PATH_DELIMITER)
+        throw(ArgumentError("file names cannot end in '/'"))
     end
-    path = split(fname, "/", keepempty=false) # can't trust dirname on Windows
+    path = split(fname, ZIP_PATH_DELIMITER, keepempty=false) # can't trust dirname on Windows
     if length(path) > 1
-        mkpath(archive, join(path[1:end-1], "/"))
+        mkpath(archive, join(path[1:end-1], ZIP_PATH_DELIMITER))
     end
 
     # 1. write local header to parent
