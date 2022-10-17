@@ -3,3 +3,4 @@ deps/deps.jl
 build.log
 deps/usr/*
 Manifest.toml
+.vscode
