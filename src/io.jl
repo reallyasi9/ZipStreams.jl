@@ -1,5 +1,6 @@
 using Dates
 using StringEncodings
+using Printf
 
 """
     readle(io, T)
@@ -166,4 +167,55 @@ function seek_backward_to(io::IO, signature::Union{UInt8,AbstractVector{UInt8}})
         skip(io, -min(jump_distance, here))
     end
     return
+end
+
+const SIZE_PREFIXES = String["", "K", "M", "G", "T", "P", "E"]
+const BINARY_SIZE_LIMITS = [0; 2 .^ (10:10:60)]
+const DECIMAL_SIZE_LIMITS = [0; 10 .^ (3:3:18)]
+"""
+    human_readable_bytes(b, [denominator=0]; [decimal=false, prefix=nothing]) -> String
+
+Convert the number of bytes `b` into a nicely formatted, human-readable string
+using byte prefixes. If `denominator` is non-zero, the number will be formatted
+as `"b/denominator"`, and `denominator` will be used to scale the prefix.
+
+If `decimal` is `true`, decimal prefixes will be used
+instead of binary prefixes; for example, 1 KB is 1,000 B in decimal, while
+1 KiB = 1,024 = 2^10 in binary). If `prefix` is one of "K", "M", "G", "T", "P", "E",
+or an empty string. that prefix will be used; if it is `nothing` (the default),
+the prefix will be selected automatically based on the magnitude of `b`.
+"""
+function human_readable_bytes(b::Integer; decimal::Bool=false, prefix::Union{Nothing,String,Symbol}=nothing)
+    scale, prefix_string = auto_prefix(b; decimal=decimal, prefix=prefix)
+    if scale <= 1
+        return "$b B"
+    end
+    return @sprintf("%0.1f %sB", b/scale, prefix_string)
+end
+
+function human_readable_bytes(b::Integer, denominator::Integer; decimal::Bool=false, prefix::Union{Nothing,String,Symbol}=nothing)
+    scale, prefix_string = auto_prefix(denominator; decimal=decimal, prefix=prefix)
+    if scale <= 1
+        return "$b/$denominator B"
+    end
+    return @sprintf("%0.1f/%0.1f %sB", b/scale, denominator/scale, prefix_string)
+end
+
+function auto_prefix(b::Integer; decimal::Bool=false, prefix::Union{Nothing,String,Symbol}=nothing)
+    if isnothing(prefix)
+        indices = decimal ? DECIMAL_SIZE_LIMITS : BINARY_SIZE_LIMITS
+        index = findlast(<=(abs(b)), indices)
+        prefix_string = SIZE_PREFIXES[index]
+    else
+        prefix_string = string(prefix)
+        index = findfirst(==(prefix_string), SIZE_PREFIXES)
+        if isnothing(index)
+            throw(ArgumentError("unknown prefix '$prefix_string': valid values are $SIZE_PREFIXES"))
+        end
+    end
+    if index > 1 && !decimal
+        prefix_string *= "i"
+    end
+    scale = decimal ? DECIMAL_SIZE_LIMITS[index] : BINARY_SIZE_LIMITS[index]
+    return scale, prefix_string
 end

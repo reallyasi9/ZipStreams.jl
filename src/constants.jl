@@ -70,11 +70,40 @@ const COMPRESSION_LOOKUP = Dict{Symbol,UInt16}(
     :store => COMPRESSION_STORE,
     :deflate => COMPRESSION_DEFLATE,
 )
+const REVERSE_COMPRESSION_LOOKUP = Symbol[
+    :store,
+    :unknown,
+    :unknown,
+    :unknown,
+    :unknown,
+    :unknown,
+    :unknown,
+    :unknown,
+    :deflate,
+]
 
 function compression_code(s::Symbol)
     return COMPRESSION_LOOKUP[s]
 end
 compression_code(x::UInt16) = x
+
+function compression_symbol(x::UInt16)
+    if x >= length(REVERSE_COMPRESSION_LOOKUP)
+        return :unknown
+    end
+    return REVERSE_COMPRESSION_LOOKUP[x+1]
+end
+function compression_symbol(s::Symbol)
+    if s ∈ keys(COMPRESSION_LOOKUP)
+        return s
+    end
+    return :unknown
+end
+
+function compression_name(s::Symbol)
+    return String(s)
+end
+compression_name(x::UInt16) = compression_name(compression_code(x))
 
 const HEADER_ZIP64 = UInt16(0x0001)
 const HEADER_AV_INFO = UInt16(0x0007)

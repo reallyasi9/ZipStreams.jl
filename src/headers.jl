@@ -1,4 +1,4 @@
-import Base: read, eof, seek, read, show, write
+import Base: eof, isdir, seek, read, show, write
 
 using CodecZlib
 using Dates
@@ -53,70 +53,8 @@ struct ZipFileInformation
     zip64::Bool
 end
 
-# Info-ZIP project, see ftp://ftp.info-zip.org/pub/infozip/license.html
-const COMPRESSION_INFO_FORMAT = String[
-    "stor",
-    "shrk",
-    "re:1",
-    "re:2",
-    "re:3",
-    "re:4",
-    "impl",
-    "tokn",
-    "defl",
-    "df64",
-    "dcli",
-    "bzp2",
-    "lzma",
-    "ters",
-    "lz77",
-    "wavp",
-    "ppmd",
-    "????",
-]
-function Base.show(io::IO, info::ZipFileInformation)
-    # TODO: status bits: drwxahs or drwxrwxrwx
-    # all: directory, readable, writable, executable
-    # windows: archive, hidden, system
-    # unix/mac: group r/w/x, user r/w/x
-    if endswith(info.name, "/") && info.uncompressed_size == 0
-        print(io, "dir  ")
-    else
-        print(io, "file ")
-    end
-    # TODO: version used to store: DD.D
-    # TODO: string stating file system type
-    # original size: at least 8 digits wide
-    @printf(io, "%8d ", info.uncompressed_size)
-    # TODO: text (t) or binary (b), encrypted=capitalized
-    # print(io, "?")
-    # TODO: extra data: none (-), extended local header only (l),
-    #   extra field only (x), both (X)
-    if info.zip64
-        print(io, "z64 ")
-    else
-        print(io, "--- ")
-    end
-    if info.descriptor_follows
-        print(io, "lhx ")
-    else
-        print(io, "--- ")
-    end
-    # compressed size: at least 8 digits wide
-    @printf(io, "%8d ", info.compressed_size)
-    # compression type
-    if info.compression_method >= length(COMPRESSION_INFO_FORMAT)
-        print(io, "???? ")
-    else
-        print(io, COMPRESSION_INFO_FORMAT[info.compression_method+1], " ")
-    end
-    # last modified date and time
-    print(io, Dates.format(info.last_modified, dateformat"dd-uuu-yy HH:MM:SS "))
-
-    # extra: CRC32
-    @printf(io, "0x%08x ", info.crc32)
-    # name with directory info
-    print(io, info.name)
+function Base.isdir(info::ZipFileInformation)
+    return endswith(info.name, ZIP_PATH_DELIMITER)
 end
 
 """

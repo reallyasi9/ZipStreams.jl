@@ -36,6 +36,21 @@ mutable struct ZipFileOutputStream{S<:IO,R<:IO} <: IO
     _closed::Bool
 end
 
+function Base.show(io::IO, zf::ZipFileOutputStream)
+    fname = zf.info.name
+    compression = compression_string(zf.info.compression_method)
+    csize = bytes_written(zf)
+    if zf.info.compression_method == compression_code(:store) || usize == 0
+        size_string = human_readable_bytes(csize)
+    else
+        usize = uncompressed_bytes_written(zf)
+        size_string = @sprintf("%s, %s compressed (%0.2f%%)", human_readable_bytes(usize), human_readable_bytes(csize), csize/usize)
+    end
+    eof_string = zf._closed ? ", closed" : ""
+    print(io, "ZipFileSink(<$fname> $compression $size_string written$eof_string)")
+    return
+end
+
 """
     close(zipoutfile)
 
@@ -61,11 +76,9 @@ function Base.close(zipfile::ZipFileOutputStream; _uncompressed_size::Union{UInt
     @debug "Flushing writes to file" bytes=zipfile._bytes_written
     write(zipfile.sink, TranscodingStreams.TOKEN_END)
     flush(zipfile.sink)
-    stats = TranscodingStreams.stats(zipfile.sink)
-    @debug "Stats read from closed sink" stats
-    compressed_size = stats.transcoded_out % UInt64
+    compressed_size = bytes_written(zipfile)
     if isnothing(_uncompressed_size)
-        uc_size = stats.transcoded_in % UInt64
+        uc_size = uncompressed_bytes_written(zipfile)
     else
         uc_size = _uncompressed_size
     end
@@ -136,6 +149,39 @@ Base.isopen(zf::ZipFileOutputStream) = isopen(zf.sink)
 Base.isreadable(zf::ZipFileOutputStream) = false
 Base.iswritable(zf::ZipFileOutputStream) = !zf._closed && iswritable(zf.sink)
 
+"""
+    bytes_written(zf::ZipFileOutputStream) -> UInt64
+
+Return the number of possibly compressed bytes written to the file so far.
+
+This function avoids the ambiguity of "position" when called on an output stream
+which has no well-defined starting point.
+
+Note: in order to get an accurate count, flush any buffered but unwritten data
+with `flush(zf)` before calling this method.
+"""
+function bytes_written(zf::ZipFileOutputStream)
+    stat = TranscodingStreams.stats(zf.sink)
+    offset = stat.out % UInt64
+    return offset
+end
+
+"""
+    uncompressed_bytes_written(zf::ZipFileOutputStream) -> UInt64
+
+Return the number of uncompressed bytes written to the file so far.
+
+This function avoids the ambiguity of "position" when called on an output stream
+which has no well-defined starting point.
+
+Note: in order to get an accurate count, flush any buffered but unwritten data
+with `flush(zf)` before calling this method.
+"""
+function uncompressed_bytes_written(zf::ZipFileOutputStream)
+    stat = TranscodingStreams.stats(zf.sink)
+    offset = stat.in % UInt64
+    return offset
+end
 
 """
     ZipArchiveOutputStream
@@ -163,6 +209,16 @@ mutable struct ZipArchiveOutputStream{S<:IO} <: IO
     _folders_created::Set{String}
     _open_file::Ref{ZipFileOutputStream}
     _is_closed::Bool
+end
+
+function Base.show(io::IO, za::ZipArchiveOutputStream)
+    nbytes = bytes_written(za)
+    entries = length(za.directory)
+    byte_string = "byte" * (nbytes == 1 ? "" : "s")
+    entries_string = "entr" * (nbytes == 1 ? "y" : "ies")
+    eof_string = isopen(za) ? "" : ", closed"
+    print(io, "ZipArchiveSink(<$nbytes $byte_string, $entries $entries_string written$eof_string>)")
+    return
 end
 
 """
@@ -402,8 +458,7 @@ function Base.open(
     ccode = compression_code(compression)
     # get the offset before the local header is written
     flush(archive)
-    stat = TranscodingStreams.stats(archive.sink)
-    offset = stat.transcoded_out % UInt64
+    offset = bytes_written(archive)
     # Branch: if writing all at once, use precalculated size
     if _precalculated
         use_descriptor = false
@@ -511,3 +566,19 @@ Base.isopen(za::ZipArchiveOutputStream) = isopen(za.sink)
 Base.isreadable(za::ZipArchiveOutputStream) = false
 Base.iswritable(za::ZipArchiveOutputStream) = iswritable(za.sink)
 
+"""
+    bytes_written(za::ZipArchiveOutputStream) -> UInt64
+
+Return the number of bytes written to the archive so far.
+
+This function avoids the ambiguity of "position" when called on an output stream
+which has no well-defined starting point.
+
+Note: in order to get an accurate count, flush any buffered but unwritten data
+with `flush(za)` before calling this method.
+"""
+function bytes_written(za::ZipArchiveOutputStream)
+    stat = TranscodingStreams.stats(za.sink)
+    offset = stat.transcoded_out % UInt64
+    return offset
+end

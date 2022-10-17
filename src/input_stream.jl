@@ -19,6 +19,20 @@ mutable struct ZipFileInputStream{S<:IO} <: IO
     _crc32::UInt32
 end
 
+function Base.show(io::IO, zf::ZipFileInputStream)
+    fname = zf.info.name
+    csize = zf.info.compressed_size
+    usize = zf.info.uncompressed_size
+    cread = bytes_read(zf)
+    uread = uncompressed_bytes_read(zf)
+    size_string = human_readable_bytes(uread, usize)
+    if zf.info.compression_method != COMPRESSION_STORE
+        size_string *= " ($(human_readable_bytes(cread, csize)) compressed)"
+    end
+    print(io, "ZipFileSource(<$fname> $size_string consumed)")
+    return
+end
+
 function zipfilesource(info::ZipFileInformation, io::IO)
     if info.descriptor_follows
         if info.compressed_size == 0
@@ -34,7 +48,8 @@ function zipfilesource(info::ZipFileInformation, io::IO)
 end
 
 function zipfilesource(f::F, info::ZipFileInformation, io::IO) where {F <: Function}
-    zipfilesource(info, io) |> f
+    zs = zipfilesource(info, io)
+    return f(zs)
 end
 
 """
@@ -100,6 +115,16 @@ Base.isopen(zf::ZipFileInputStream) = isopen(zf.source)
 Base.bytesavailable(zf::ZipFileInputStream) = bytesavailable(zf.source)
 Base.close(::ZipFileInputStream) = nothing # closing doesn't do anything
 
+function bytes_read(zf::ZipFileInputStream)
+    stats = TranscodingStreams.stats(zf.source)
+    return stats.in % UInt64
+end
+
+function uncompressed_bytes_read(zf::ZipFileInputStream)
+    stats = TranscodingStreams.stats(zf.source)
+    return stats.out % UInt64
+end
+
 """
     ZipArchiveInputStream
 
@@ -142,31 +167,12 @@ mutable struct ZipArchiveInputStream{S<:IO} <: IO
 end
 
 function Base.show(io::IO, za::ZipArchiveInputStream)
-    # show different results depending on whether or not the file info is stored
-    # and whether or not we have reached EOF on the input stream
-    print(io, "Zip stream data after ", position(za), " bytes")
-    if eof(za)
-        print(io, " (EOF)")
-    end
-    print(io, ", number of entries")
-    print(io, ": ", length(za.directory))
-    if length(za.directory) > 0
-        println(io)
-        total_uc = 0
-        total_c = 0
-        for entry in za.directory
-            println(io, entry)
-            total_uc += entry.uncompressed_size
-            total_c += entry.compressed_size
-        end
-        print(io, length(za.directory), " file")
-        if length(za.directory) != 1
-            print(io, "s")
-        end
-        if total_uc > 0
-            @printf(io, ", %d bytes uncompressed, %d bytes compressed: %5.1f%%", total_uc, total_c, (total_uc - total_c) * 100 / total_uc)
-        end
-    end
+    nbytes = position(za)
+    entries = length(za.directory)
+    byte_string = human_readable_bytes(nbytes)
+    entries_string = "entr" * (entries == 1 ? "y" : "ies")
+    eof_string = eof(za) ? ", EOF" : ""
+    print(io, "ZipArchiveSource($byte_string from $entries $entries_string consumed$eof_string)")
     return
 end
 
@@ -231,6 +237,14 @@ Base.unsafe_read(zs::ZipArchiveInputStream, p::Ptr{UInt8}, nb::UInt64) = unsafe_
 function Base.position(zs::ZipArchiveInputStream)
     stat = TranscodingStreams.stats(zs.source)
     return stat.in
+end
+function bytes_read(zs::ZipArchiveInputStream)
+    stat = TranscodingStreams.stats(zs.source)
+    return stat.in
+end
+function uncompressed_bytes_read(zs::ZipArchiveInputStream)
+    stat = TranscodingStreams.stats(zs.source)
+    return stat.out
 end
 
 function Base.skip(zs::ZipArchiveInputStream, n::Integer)
