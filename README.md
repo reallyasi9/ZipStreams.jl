@@ -70,13 +70,48 @@ You have been warned!
 Until the package is published, install via the Julia package manager with
 `Pkg.add(; url="https://github.com/reallyasi9/ZipStreams.jl")`.
 
+## Terminology: Archives and Files, Sources and Sinks
+
+To avoid ambiguity, this package tries to use the following terms consistently
+throughout type names, function names, and documentation:
+
+File
+: A File is a named sequence of zero or more bytes that represents a distinct
+collection of data within an Archive. According to the ZIP standard, a File is
+always preceeded by a Local File Header and may have a Data Descriptor following
+the File's contents. The contents of the File may be compressed within the Archive.
+
+Directory
+: A Directory is a named structure within an Archive that exists for organizational
+purposes only. A Directory meets the definition of File with the additional
+conditions that it always has size zero, it never has a Data Descriptor following
+it, and has a name that always ends in a forward slash character (`/`).
+
+Entity
+: An Entity is either a File or a Directory.
+
+Archive
+: An Archive is a sequence of bytes that represents zero or more separate Entities.
+According to the ZIP standard, an Archive is a series of Entities followed by a
+Central Directory which describes the Entities.
+
+Source
+: A Source is an object that can be read as a sequence of bytes from beginning to
+end. A Source does not necessarily implement random access or seek operations, nor
+does it necessarily support write operations.
+
+Sink
+: A Sink is an object to which a sequence of bytes can be written. A Sink does not
+necessarily implement random access or seek operations, nor does it necessarily
+support read operations.
+
 ### Reading archives with `zipsource`
 
 You can wrap any Julia readable `IO` object with the `zipsource` function. The returned
-struct can be iterated to read archived files in archive order. Information about
-each file is stored in the `.info` property of the struct returned from the
-iterator. The struct returned from the iterator is readable like any standard
-Julia `IO` object.
+object can be iterated to read archived files in archive order. Information about
+each file is stored in the `.info` property of the object returned from the
+iterator. The object returned from the iterator is readable like any standard
+Julia `IO` object, but it is not writable.
 
 Here are some examples:
 
@@ -333,7 +368,7 @@ try
         f = next_file(source)  # fails because the size of the file cannot be read from the Local File Header
     end
 catch e
-    @error "exception caught" e
+    @error "exception caught" exception=e
 end
 
 zipsink("new-archive.zip") do sink
@@ -347,46 +382,119 @@ zipsource("new-archive.zip") do source
 end
 ```
 
-### Unstreamable reading and writing with `zipfile`
+#### Creating directories in an archive
 
+Directories within a ZIP archive are nothing more than files with zero length and a name
+that ends in a forward slash (`/`). If you try to make a file using `open` or `write_file`
+that has a name ending in `/`, the method will throw an error. You can, however, make a
+directory by calling the `mkdir` and `mkpath` functions. The work similar to how
+`Base.mkdir` and `Base.mkpath` work: the former will throw an error if all of the parent
+directories do not exist, while the latter will create the parent directories as needed.
+Here are examples of these two functions:
 
 ```julia
-# open an enormous file from a network stream
-using BufferedStreams
-using HTTP
-HTTP.open(:GET, "https://download.cms.gov/nppes/NPPES_Data_Dissemination_August_2022.zip") do http
-    zipsource(BufferedInputStream(http)) do zs
-        for f in zs
-            println(f.info.name)
-            break
-        end
-    end
-end
+using ZipStreams
 
-# convenience method for opening an archive as a zipstream
-zs = zipsource("archive.zip")
-close(zs)
-
-# convenience method for automatically closing the archive when done
-zipsource("archive.zip") do zs
-    ...
-end
-
-# local header information is stored while iterating through the archive,
-# which allows validation against the central directory
-zipsource("archive.zip") do zs
-
-    # validate individual files
-    for f in zs
-        validate(f) # throws if there is a problem, returns file data
+zipsink("new-archive.zip") do sink
+    try
+        f = open(sink, "file/")  # fails because files cannot end in '/'
+    catch e
+        @error "exception caught" exception=e
     end
 
-    # validate the entire archive at once (including the remaining files)
-    validate(zs) # throws if there is a problem, returns a vector of file data
+    mkdir(sink, "dir1/")  # creates a directory called "dir1/" in the root of the archive
+    mkdir(sink, "dir1/dir2/")  # creates "dir2/" as a subdirectory of "dir1/"
+
+    try
+        mkdir(sink, "dir3/dir4/")  # fails because mkdir won't create parent directories
+    catch e
+        @error "exception caught" exception=e
+    end
+    
+    mkpath(sink, "dir3/dir4/")  # creates both "dir3/" and "dir3/dir4/"
+
+    mkdir(sink, "dir5")  # The ending slash will be appended to directory names automatically
 end
 ```
 
-# Notes and aspirations
+The `mkdir` and `mkpath` methods return the number of bytes written to the archive, 
+including the Local File Header required to define the directory, but excluding the
+Central Directory Header data (that will be written when the sink is closed).
+
+The sink keeps track of which directories have been defined and skips creating directories
+that already exist, as this example demonstrates:
+
+```julia
+using ZipStreams
+
+zipsink("new-archive.zip") do sink
+    a = mkdir(sink, "dir1/")
+    @assert a > 0
+    b = mkdir(sink, "dir1/")
+    @assert b == 0
+    c = mkpath(sink, "dir1/dir2")  # dir1 already exists, so do not recreate it
+    d = mkpath(sink, "dir3/dir4")  # dir3 has to be created
+    @assert d > c
+end
+```
+
+Opening a new file in the sink that contains a non-trivial path will throw an error if the
+parent path does not exist. The keyword argument `make_path=true` will cause the method to
+create the parent path as if `mkpath` were called first:
+
+```julia
+using ZipStreams
+
+zipsink("new-archive.zip") do sink
+    try
+        f = open(sink, "dir1/file")  # fails because directory "dir1/" does not exist
+    catch e
+        @error "exception caught" exception=e
+    end
+    f = open(sink, "dir1/file"; make_path=true)  # creates "dir1/" first
+    # ...
+    close(f)
+end
+```
+
+Relative directory names `.` or `..` are interpreted as directories named `.` or `..` and
+_not_ as relative paths. The root directory of the archive is unnamed, so attempts to
+create a directory named `/` will be ignored. Attempting to create an unnamed subdirectory
+will result in the unnamed subdirectory being ignored (e.g., `mkpath(sink, "dir1//dir2")` 
+will do the same thing as `mkpath(sink, "dir1/dir2")`). By rule, attempting to make a
+directory that appears to begin with a Windows drive specifier, even on a non-Windows OS,
+will throw an error.
+
+```julia
+using ZipStreams
+
+zipsink("new-archive.zip") do sink
+    @assert mkpath(sink, "/") == 0  # '/' at the beginning is ignored
+    mkpath(sink, "/dir1")
+    @assert mkpath(sink, "dir1") == 0  # already created with "/dir1"
+    
+    mkpath(sink, "dir1/////dir2")
+    @assert mkpath(sink, "dir1/dir2") == 0  # already created with "dir1//////dir2"
+
+    try
+        mkpath(sink, "c:\\dir1")  # fails because directory appears to start with a drive specifier
+    catch e
+        @error "exception caught" exception=e
+    end
+    try
+        mkpath(sink, "c:/dir1")  # fails for the same reason: slash direction doesn't matter
+    catch e
+        @error "exception caught" exception=e
+    end
+    try
+        mkpath(sink, "\\\\networkshare\\dir1")  # fails because Windows network drives count as drive specifiers
+    catch e
+        @error "exception caught" exception=e
+    end
+end
+```
+
+## Notes and aspirations
 
 This package was inspired by frustrations at using more standard ZIP archive
 reader/writers like [`ZipFile.jl`](https://github.com/fhs/ZipFile.jl). That's
@@ -395,12 +503,12 @@ standards-compliant than this package ever intends to be! As you can see from
 the history of this repository, much of the work here started as a fork of
 that package.
 
-## To do
+### To do
 
-* Document `zipsink` and `open` writing functionality
+* ~~Document `zipsink` and `open` writing functionality~~
 * Add Documenter.jl hooks
 * Add benchmarks
-* Mock read-only and write-only streams for testing
-* Add all-at-once file writing
-* Add filesystem-like `open` function for reading.
-* Make the user responsible for closing files if `open() do x ... end` syntax is not used.
+* Convert examples in documentation to tests
+* ~~Mock read-only and write-only streams for testing~~
+* ~~Add all-at-once file writing~~
+* ~~Make the user responsible for closing files if `open() do x ... end` syntax is not used.~~
