@@ -12,6 +12,9 @@ StringEncodings = "69024149-9ee7-55f6-a4c4-859efe599b68"
 TranscodingStreams = "3bb67fe8-82b1-5028-8e26-92a6c54297fa"
 
 [compat]
+CodecZlib = "0.7"
+StringEncodings = "0.3"
+TranscodingStreams = "0.9"
 julia = "1.7.0"
 
 [extras]
