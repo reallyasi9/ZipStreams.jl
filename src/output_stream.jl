@@ -318,7 +318,7 @@ the `'/'` character.
 function Base.mkdir(ziparchive::ZipArchiveOutputStream, path::AbstractString; comment::AbstractString="")
     paths = split(path, ZIP_PATH_DELIMITER; keepempty=false)
     if isempty(paths)
-        return path
+        return 0
     end
     for i in 1:length(paths)-1
         p = join(paths[1:i], ZIP_PATH_DELIMITER)
@@ -327,6 +327,9 @@ function Base.mkdir(ziparchive::ZipArchiveOutputStream, path::AbstractString; co
         end
     end
     path = join(paths, ZIP_PATH_DELIMITER)
+    if path ∈ ziparchive._folders_created
+        return 0
+    end
     info = ZipFileInformation(
         COMPRESSION_STORE,
         0,
