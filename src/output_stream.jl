@@ -303,6 +303,19 @@ function Base.close(archive::ZipArchiveOutputStream; close_sink::Bool=true)
     return
 end
 
+# From Base.splitdrive
+const DRIVE_SPEC_RE = r"^[^\\]+:|\\\\[^\\]+\\[^\\]+|\\\\\?\\UNC\\[^\\]+\\[^\\]+|\\\\\?\\[^\\]+:"
+# split and normalize the path (resolve . and .. elements)
+# throws if the path is absolute or contains a Windows-like drive specifier as the first element
+function _split_norm_path(path::AbstractString)
+    m = match(DRIVE_SPEC_RE, path)
+    if !isnothing(m)
+        throw(ArgumentError("Windows-like drive specifiers cannot be used: path started with drive specifier '$(m.match)'"))
+    end
+    paths = split(path, ZIP_PATH_DELIMITER; keepempty=false)
+    return paths
+end
+
 """
     mkdir(archive, path; comment="")
 
@@ -316,18 +329,18 @@ Directories in Zip archives are merely length zero files with names that end in
 the `'/'` character.
 """
 function Base.mkdir(ziparchive::ZipArchiveOutputStream, path::AbstractString; comment::AbstractString="")
-    paths = split(path, ZIP_PATH_DELIMITER; keepempty=false)
+    paths = _split_norm_path(path)
     if isempty(paths)
         return 0
     end
-    for i in 1:length(paths)-1
-        p = join(paths[1:i], ZIP_PATH_DELIMITER)
+    p = paths[1]
+    for element in paths[2:end]
         if p ∉ ziparchive._folders_created
             error("cannot create directory '$path': path '$p' does not exist")
         end
+        p *= ZIP_PATH_DELIMITER * element
     end
-    path = join(paths, ZIP_PATH_DELIMITER)
-    if path ∈ ziparchive._folders_created
+    if p ∈ ziparchive._folders_created
         return 0
     end
     info = ZipFileInformation(
@@ -336,7 +349,7 @@ function Base.mkdir(ziparchive::ZipArchiveOutputStream, path::AbstractString; co
         0,
         now(),
         0,
-        path * ZIP_PATH_DELIMITER,
+        p * ZIP_PATH_DELIMITER,
         false,
         ziparchive.utf8,
         false,
@@ -348,7 +361,7 @@ function Base.mkdir(ziparchive::ZipArchiveOutputStream, path::AbstractString; co
     nb = write(ziparchive, local_file_header)
     central_directory_header = CentralDirectoryHeader(info, offset, comment, true)
     push!(ziparchive.directory, central_directory_header)
-    push!(ziparchive._folders_created, path)
+    push!(ziparchive._folders_created, p)
     return nb
 end
 
@@ -365,18 +378,19 @@ Directories in Zip archives are merely length zero files with names that end in
 the `'/'` character.
 """
 function Base.mkpath(ziparchive::ZipArchiveOutputStream, path::AbstractString; comment::AbstractString="")
-    paths = split(path, ZIP_PATH_DELIMITER; keepempty=false)
+    paths = _split_norm_path(path)
     nb = 0
     if isempty(paths)
         return nb
     end
-    for i in 1:length(paths)-1
-        p = join(paths[1:i], ZIP_PATH_DELIMITER)
+    p = paths[1]
+    for element in paths[2:end-1]
         if p ∉ ziparchive._folders_created
             nb += mkdir(ziparchive, p)
         end
+        p *= ZIP_PATH_DELIMITER * element
     end
-    return nb + mkdir(ziparchive, path; comment=comment)
+    return nb + mkdir(ziparchive, p; comment=comment)
 end
 
 function Base.write(za::ZipArchiveOutputStream, value::UInt8)
