@@ -437,6 +437,7 @@ function Base.open(
     compression::Symbol = :deflate,
     utf8::Bool = true,
     comment::AbstractString = "",
+    make_path::Bool = false,
     _uncompressed_size::UInt64 = UInt64(0),
     _compressed_size::UInt64 = UInt64(0),
     _crc::UInt32 = CRC32_INIT,
@@ -454,7 +455,14 @@ function Base.open(
     end
     path = split(fname, ZIP_PATH_DELIMITER, keepempty=false) # can't trust dirname on Windows
     if length(path) > 1
-        mkpath(archive, join(path[1:end-1], ZIP_PATH_DELIMITER))
+        parent = join(path[1:end-1], ZIP_PATH_DELIMITER)
+        if parent ∉ archive._folders_created
+            if make_path
+                mkpath(archive, join(path[1:end-1], ZIP_PATH_DELIMITER))
+            else
+                throw(ArgumentError("parent path '$parent' does not exist"))
+            end
+        end
     end
 
     # 1. write local header to parent
