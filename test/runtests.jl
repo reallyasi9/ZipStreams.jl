@@ -359,10 +359,17 @@ end
             @test header.info.utf8 == true
             @test header.info.zip64 == true
         end
-        @testset "Single file, subdirectory (nothrow)" begin
+        @testset "Single file, subdirectory (make_path=false, default)" begin
             buffer = IOBuffer()
             archive = zipsink(buffer)
-            f = open(archive, "subdir/hello.txt")
+            @test_throws ArgumentError open(archive, "subdir/hello.txt")
+            @test_throws ArgumentError open(archive, "subdir/hello.txt"; make_path=false)
+            close(archive)
+        end
+        @testset "Single file, subdirectory (make_path=true)" begin
+            buffer = IOBuffer()
+            archive = zipsink(buffer)
+            f = open(archive, "subdir/hello.txt"; make_path=true)
             write(f, FILE_CONTENT)
             close(f)
             close(archive)
