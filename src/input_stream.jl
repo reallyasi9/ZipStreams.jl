@@ -4,22 +4,22 @@ using Printf
 using TranscodingStreams
 
 """
-    ZipFileInputStream
+    ZipFileSource
 
 A wrapper around an `IO` stream that includes information about an archived file. 
 
-A `ZipFileInputStream` implements `read(zf, UInt8)`, allowing all other basic read
+A `ZipFileSource` implements `read(zf, UInt8)`, allowing all other basic read
 opperations to treat the object as if it were a file. Information about the
 archived file is stored in the `info` property.
 """
-mutable struct ZipFileInputStream{S<:IO} <: IO
+mutable struct ZipFileSource{S<:IO} <: IO
     info::ZipFileInformation
     source::S
 
     _crc32::UInt32
 end
 
-function Base.show(io::IO, zf::ZipFileInputStream)
+function Base.show(io::IO, zf::ZipFileSource)
     fname = zf.info.name
     csize = zf.info.compressed_size
     usize = zf.info.uncompressed_size
@@ -44,7 +44,7 @@ function zipfilesource(info::ZipFileInformation, io::IO)
     truncstream = TruncatedInputStream(io, info.compressed_size)
     C = info.compression_method == COMPRESSION_DEFLATE ? CodecZlib.DeflateDecompressor : TranscodingStreams.Noop
     stream = TranscodingStream(C(), truncstream)
-    return ZipFileInputStream(info, stream, CRC32_INIT)
+    return ZipFileSource(info, stream, CRC32_INIT)
 end
 
 function zipfilesource(f::F, info::ZipFileInformation, io::IO) where {F <: Function}
@@ -61,7 +61,7 @@ in the header and return the data read.
 When called, this method will read through the remainder of the archived file
 until EOF is reached.
 """
-function validate(zf::ZipFileInputStream)
+function validate(zf::ZipFileSource)
     # read the remainder of the file
     data = read(zf)
     stats = TranscodingStreams.stats(zf.source)
@@ -86,47 +86,47 @@ function validate(zf::ZipFileInputStream)
     return data
 end
 
-function Base.read(zf::ZipFileInputStream, ::Type{UInt8})
+function Base.read(zf::ZipFileSource, ::Type{UInt8})
     x = read(zf.source, UInt8)
     zf._crc32 = crc32([x], zf._crc32)
     return x
 end
 
-function Base.unsafe_read(zf::ZipFileInputStream, p::Ptr{UInt8}, nb::UInt64) 
+function Base.unsafe_read(zf::ZipFileSource, p::Ptr{UInt8}, nb::UInt64) 
     n = unsafe_read(zf.source, p, nb)
     zf._crc32 = crc32(p, n, zf._crc32)
     return n
 end
 
-Base.eof(zf::ZipFileInputStream) = eof(zf.source)
-function Base.seek(::ZipFileInputStream, ::Integer)
+Base.eof(zf::ZipFileSource) = eof(zf.source)
+function Base.seek(::ZipFileSource, ::Integer)
     error("stream cannot seek")
 end
-function Base.skip(zf::ZipFileInputStream, n::Integer)
+function Base.skip(zf::ZipFileSource, n::Integer)
     if n < 0
         error("stream cannot skip backward")
     end
     skip(zf.source, n)
     return
 end
-Base.isreadable(zf::ZipFileInputStream) = isreadable(zf.source)
-Base.iswritable(::ZipFileInputStream) = false
-Base.isopen(zf::ZipFileInputStream) = isopen(zf.source)
-Base.bytesavailable(zf::ZipFileInputStream) = bytesavailable(zf.source)
-Base.close(::ZipFileInputStream) = nothing # closing doesn't do anything
+Base.isreadable(zf::ZipFileSource) = isreadable(zf.source)
+Base.iswritable(::ZipFileSource) = false
+Base.isopen(zf::ZipFileSource) = isopen(zf.source)
+Base.bytesavailable(zf::ZipFileSource) = bytesavailable(zf.source)
+Base.close(::ZipFileSource) = nothing # closing doesn't do anything
 
-function bytes_read(zf::ZipFileInputStream)
+function bytes_read(zf::ZipFileSource)
     stats = TranscodingStreams.stats(zf.source)
     return stats.in % UInt64
 end
 
-function uncompressed_bytes_read(zf::ZipFileInputStream)
+function uncompressed_bytes_read(zf::ZipFileSource)
     stats = TranscodingStreams.stats(zf.source)
     return stats.out % UInt64
 end
 
 """
-    ZipArchiveInputStream
+    ZipArchiveSource
 
 A read-only lazy streamable representation of a Zip archive.
 
@@ -148,16 +148,16 @@ immediately upon reading the first Local File Header record it sees in the strea
 greatly reducing latency to first read on large files, and also reducing the
 amount of data necessary to cache on disk or in memory.
 
-A `ZipArchiveInputStream` is a wapper around an `IO` object that allows the user
+A `ZipArchiveSource` is a wapper around an `IO` object that allows the user
 to extract files as they are read from the stream instead of waiting to read the
 file information from the Central Directory at the end of the stream.
 
-`ZipArchiveInputStream` objects can be iterated. Each iteration returns an IO
+`ZipArchiveSource` objects can be iterated. Each iteration returns an IO
 object that will lazily extract (and decompress) file data from the archive.
 
-Create `ZipArchiveInputStream` objects using the [`zipsource`](@ref) function.
+Create `ZipArchiveSource` objects using the [`zipsource`](@ref) function.
 """
-mutable struct ZipArchiveInputStream{S<:IO} <: IO
+mutable struct ZipArchiveSource{S<:IO} <: IO
     source::S
     directory::Vector{ZipFileInformation}
     offsets::Vector{UInt64}
@@ -166,7 +166,7 @@ mutable struct ZipArchiveInputStream{S<:IO} <: IO
     _no_more_files::Bool
 end
 
-function Base.show(io::IO, za::ZipArchiveInputStream)
+function Base.show(io::IO, za::ZipArchiveSource)
     nbytes = position(za)
     entries = length(za.directory)
     byte_string = human_readable_bytes(nbytes)
@@ -182,7 +182,7 @@ end
 
 Create a read-only lazy streamable representation of a Zip archive.
 
-The first form returns a `ZipArchiveInputStream` wrapped around `io` that allows
+The first form returns a `ZipArchiveSource` wrapped around `io` that allows
 the user to extract files as they are read from the stream by iterating over the
 returned object. `io` can be an object that inherits from `Base.IO` (technically
 only requiring `read`, `eof`, `isopen`, `close`, and `bytesavailable` to be
@@ -190,7 +190,7 @@ defined) or an `AbstractString` file name, which will open the file in read-only
 mode and wrap that `IOStream`.
 
 The second form takes a unary function as the first argument. The constructed
-`ZipArchiveInputStream` object will be passed to the function and the results of
+`ZipArchiveSource` object will be passed to the function and the results of
 the function will be returned to the user. This allows compatability with `do`
 blocks. If `io` is an `AbstractString` file name, the file will be automatically
 closed when the block exits. If `io` is a `Base.IO` object as described above, it
@@ -212,7 +212,7 @@ the lifetime of the argument.
 """
 function zipsource(io::IO)
     stream = TranscodingStreams.NoopStream(io)
-    zs = ZipArchiveInputStream(stream, ZipFileInformation[], UInt64[], false)
+    zs = ZipArchiveSource(stream, ZipFileInformation[], UInt64[], false)
     return zs
 end
 zipsource(fname::AbstractString; kwargs...) = zipsource(Base.open(fname, "r"); kwargs...)
@@ -227,27 +227,27 @@ function zipsource(f::F, x::AbstractString; kwargs...) where {F<:Function}
     return val
 end
 
-Base.eof(zs::ZipArchiveInputStream) = eof(zs.source)
-Base.isopen(zs::ZipArchiveInputStream) = isopen(zs.source)
-Base.bytesavailable(zs::ZipArchiveInputStream) = bytesavailable(zs.source)
-Base.close(zs::ZipArchiveInputStream) = close(zs.source)
+Base.eof(zs::ZipArchiveSource) = eof(zs.source)
+Base.isopen(zs::ZipArchiveSource) = isopen(zs.source)
+Base.bytesavailable(zs::ZipArchiveSource) = bytesavailable(zs.source)
+Base.close(zs::ZipArchiveSource) = close(zs.source)
 
-Base.read(zs::ZipArchiveInputStream, ::Type{UInt8}) = read(zs.source, UInt8)
-Base.unsafe_read(zs::ZipArchiveInputStream, p::Ptr{UInt8}, nb::UInt64) = unsafe_read(zs.source, p, nb)
-function Base.position(zs::ZipArchiveInputStream)
+Base.read(zs::ZipArchiveSource, ::Type{UInt8}) = read(zs.source, UInt8)
+Base.unsafe_read(zs::ZipArchiveSource, p::Ptr{UInt8}, nb::UInt64) = unsafe_read(zs.source, p, nb)
+function Base.position(zs::ZipArchiveSource)
     stat = TranscodingStreams.stats(zs.source)
     return stat.in
 end
-function bytes_read(zs::ZipArchiveInputStream)
+function bytes_read(zs::ZipArchiveSource)
     stat = TranscodingStreams.stats(zs.source)
     return stat.in
 end
-function uncompressed_bytes_read(zs::ZipArchiveInputStream)
+function uncompressed_bytes_read(zs::ZipArchiveSource)
     stat = TranscodingStreams.stats(zs.source)
     return stat.out
 end
 
-function Base.skip(zs::ZipArchiveInputStream, n::Integer)
+function Base.skip(zs::ZipArchiveSource, n::Integer)
     if n < 0
         error("stream cannot skip backward")
     end
@@ -255,12 +255,12 @@ function Base.skip(zs::ZipArchiveInputStream, n::Integer)
     read(zs.source, n)
     return
 end
-function Base.seek(::ZipArchiveInputStream, ::Integer)
+function Base.seek(::ZipArchiveSource, ::Integer)
     error("stream cannot seek")
 end
 
-Base.isreadable(za::ZipArchiveInputStream) = isreadable(za.source)
-Base.iswritable(::ZipArchiveInputStream) = false
+Base.isreadable(za::ZipArchiveSource) = isreadable(za.source)
+Base.iswritable(::ZipArchiveSource) = false
 
 """
     validate(zs)
@@ -278,13 +278,13 @@ Central Directory.
     not created with `validate_directory` equal to `true`.
 
 Throws an exception if the directory at the end of the `IO` source in the
-`ZipArchiveInputStream` does not match the files detected while reading the
+`ZipArchiveSource` does not match the files detected while reading the
 archive. If `zs` has the `validate_files` property set to `true`, this method will
 also validate the archived files with their own headers as they are read.
 
-See also [`validate(::ZipFileInputStream)`](@ref).
+See also [`validate(::ZipFileSource)`](@ref).
 """
-function validate(zs::ZipArchiveInputStream)
+function validate(zs::ZipArchiveSource)
     # validate remaining files
     filedata = mapreduce(validate, push!, zs; init=Vector{Vector{UInt8}}())
 
@@ -322,7 +322,7 @@ function validate(zs::ZipArchiveInputStream)
     return filedata
 end
 
-function Base.iterate(zs::ZipArchiveInputStream, state::Int=0)
+function Base.iterate(zs::ZipArchiveSource, state::Int=0)
     if zs._no_more_files
         # nothing else to read (already saw the central directory)
         return nothing
@@ -368,7 +368,7 @@ Read the next file in the archive and return a readable `IO` object or `nothing`
 
 This is the same as calling `first(iterate(archive))`.
 """
-function next_file(archive::ZipArchiveInputStream)
+function next_file(archive::ZipArchiveSource)
     f = iterate(archive)
     if isnothing(f)
         return f
@@ -376,6 +376,6 @@ function next_file(archive::ZipArchiveInputStream)
     return first(f)
 end
 
-Base.IteratorSize(::Type{ZipArchiveInputStream}) = Base.SizeUnknown()
-Base.IteratorEltype(::Type{ZipArchiveInputStream}) = Base.HasEltype()
-Base.eltype(::Type{ZipArchiveInputStream}) = ZipFileInputStream
+Base.IteratorSize(::Type{ZipArchiveSource}) = Base.SizeUnknown()
+Base.IteratorEltype(::Type{ZipArchiveSource}) = Base.HasEltype()
+Base.eltype(::Type{ZipArchiveSource}) = ZipFileSource

@@ -5,7 +5,7 @@ using Printf
 
 Print information about a ZIP archive or file stream.
 """
-function info(io::IO, za::ZipArchiveInputStream)
+function info(io::IO, za::ZipArchiveSource)
     print(io, "ZIP archive source stream data after reading ", human_readable_bytes(bytes_read(za)))
     if eof(za)
         print(io, " (EOF reached)")
@@ -37,7 +37,7 @@ function info(io::IO, za::ZipArchiveInputStream)
     return 
 end
 
-info(za::ZipArchiveInputStream) = info(stdout, za)
+info(za::ZipArchiveSource) = info(stdout, za)
 
 # Info-ZIP project, see ftp://ftp.info-zip.org/pub/infozip/license.html
 const COMPRESSION_INFO_FORMAT = String[
@@ -105,5 +105,5 @@ function info(io::IO, zi::ZipFileInformation)
     print(io, zi.name)
 end
 info(zi::ZipFileInformation) = info(stdout, zi)
-info(io::IO, zf::ZipFileInputStream) = info(io, zf.info)
-info(zf::ZipFileInputStream) = info(stdout, zf)
+info(io::IO, zf::ZipFileSource) = info(io, zf.info)
+info(zf::ZipFileSource) = info(stdout, zf)
