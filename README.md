@@ -65,10 +65,7 @@ You have been warned!
 
 ## Installation and use
 
-~~Install via the Julia package manager, `Pkg.add("ZipStreams")`.~~
-
-Until the package is published, install via the Julia package manager with
-`Pkg.add(; url="https://github.com/reallyasi9/ZipStreams.jl")`.
+Install via the Julia package manager, `Pkg.add("ZipStreams")`.
 
 ## Terminology: Archives and Files, Sources and Sinks
 
