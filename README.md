@@ -30,7 +30,7 @@ archives can be up to 16 EB (2^64 bytes) in size, which can easily overwhelm eve
 the largest of modern supercomputers.
 
 However, the ZIP archive specification also requires a "Local File Header" that
-preceeding the (possibly compressed) file data of every file in the archive. The
+preceding the (possibly compressed) file data of every file in the archive. The
 Local File Header contains enough information to allow a reader to extract the
 file and perform simple error checking as long as three conditions are met:
 1. The information in the Local File Header is correctly specified. The Central
@@ -75,7 +75,7 @@ throughout type names, function names, and documentation:
 File
 : A File is a named sequence of zero or more bytes that represents a distinct
 collection of data within an Archive. According to the ZIP standard, a File is
-always preceeded by a Local File Header and may have a Data Descriptor following
+always preceded by a Local File Header and may have a Data Descriptor following
 the File's contents. The contents of the File may be compressed within the Archive.
 
 Directory
@@ -210,7 +210,7 @@ inaccurate values. To verify that the content of the file matches the values in 
 Local File Header, use the `validate` method on the archived file. To verify that
 all file content in the archive matches the values in the Central Directory, use
 the `validate` method on the archive itself. These methods will throw an error if
-they detect any inconsitencies.
+they detect any inconsistencies.
 
 For example, to validate the data in a single file stored in the archive:
 
@@ -288,7 +288,7 @@ You can wrap any `IO` object that supports writing bytes (any type that implemen
 `unsafe_write(::T, ::Ptr{UInt8}, ::UInt)`) in a special ZIP archive writer with the
 `zipsink` function. The function will return an object that allows creating and writing
 files within the archive. You can then call `open(sink, filename)` using the returned
-object to create a new file in the archive and begin writting to it with standard `IO`
+object to create a new file in the archive and begin writing to it with standard `IO`
 functions.
 
 This example creates a new ZIP archive file on disk, creates a new file within the archive,
@@ -498,7 +498,8 @@ reader/writers like [`ZipFile.jl`](https://github.com/fhs/ZipFile.jl). That's
 not to say ZipFile.jl is bad--on the contrary, it is _way_ more
 standards-compliant than this package ever intends to be! As you can see from
 the history of this repository, much of the work here started as a fork of
-that package.
+that package. Because of that, I am grateful to [Fazlul Shahriar](https://github.com/fhs)
+for programming and making available `ZipFile.jl`.
 
 ### To do
 
@@ -509,3 +510,4 @@ that package.
 * ~~Mock read-only and write-only streams for testing~~
 * ~~Add all-at-once file writing~~
 * ~~Make the user responsible for closing files if `open() do x ... end` syntax is not used.~~
+* (2.0) Add ability to read files using Data Descriptors
