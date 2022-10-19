@@ -112,7 +112,7 @@ Julia `IO` object, but it is not writable.
 
 Here are some examples:
 
-#### Iterating through file from an archive on disk
+#### Iterating through files from an archive on disk
 
 This is perhaps the most common way to work with ZIP archives: reading them from disk and
 doing things with the contained files. Because `zipsource` reads from the beginning of the
@@ -155,7 +155,7 @@ open("archive.zip") do io
 end
 ```
 
-Because reading ZIP files from a file on disk is a common use case, a convenience
+Because reading ZIP files from an archive on disk is a common use case, a convenience
 method taking a file name argument is provided:
 
 ```julia
@@ -166,8 +166,9 @@ zs = zipsource("archive.zip") # Note: the caller is responsible for closing this
 close(zs)
 ```
 
-In addition, a method that mimics Julia's `open() do x ... end` behavior is
-included for managing the lifetime of any file handles opened by `zipsource`:
+In addition, a method that takes as its first argument a unary function is
+included so that users can manage the lifetime of any file handles opened by
+`zipsource` in an `open() do x ... end` block:
 
 ```julia
 using ZipStreams
@@ -244,7 +245,7 @@ close(io)
 
 The `validate` methods consume the data in the source and return vectors of
 raw bytes. When called on an archived file, it returns a single `Vector{UInt8}`.
-When called on the archive itself, it returns a `Vector{Vector{UInt8}}` with
+When called on the archive itself, it returns a `Vector{Vector{UInt8}}` containing
 the remaining unread file data in archive order, _excluding any files that have already
 been read by iterating or with `next_file`_.
 
@@ -307,8 +308,8 @@ close(sink)
 
 Convenience methods are included that create a new file on disk by passing a file name to
 `zipsink` instead of an `IO` object and that run a unary function so that `zipsink` can be
-used like `Base.open() do io ... end`. In addition, the `open(sink, filename)` method can
-also be used like `Base.open() do io ... end`, as this example shows:
+used with a `do ... end` block. In addition, the `open(sink, filename)` method can
+also be used with a `do ... end` block, as this example shows:
 
 ```julia
 using ZipStreams
@@ -343,10 +344,10 @@ When you open a file for writing in a ZIP archive using `open(sink, filename)`, 
 the file is done in a streaming fashion with a Data Descriptor written at the end of the
 file data when it is closed. If you want to write an entire file to the archive at once,
 you can use the `write_file(sink, filename, data)` method. This method will write file size
-and checksum information to the archive using the Local File Header rather than a Data
+and checksum information to the archive in the Local File Header rather than using a Data
 Descriptor. The advantage to this method is that you can turn around and open the archive
 using `zipsource`: when streamed for reading, the Local File Header will report the correct
-file size, allowing proper streaming of the file data. The disadvantages to using this method
+file size, allowing proper streamed reading of the file data. The disadvantages to using this method
 for writing data are that you need to have all of the data you want to write available at
 one time and that both the raw data and the compressed data need to fit in memory at the
 same time. Here are some examples using this method for writing files:
@@ -384,7 +385,7 @@ end
 Directories within a ZIP archive are nothing more than files with zero length and a name
 that ends in a forward slash (`/`). If you try to make a file using `open` or `write_file`
 that has a name ending in `/`, the method will throw an error. You can, however, make a
-directory by calling the `mkdir` and `mkpath` functions. The work similar to how
+directory by calling the `mkdir` and `mkpath` functions. They work similar to how
 `Base.mkdir` and `Base.mkpath` work: the former will throw an error if all of the parent
 directories do not exist, while the latter will create the parent directories as needed.
 Here are examples of these two functions:
@@ -414,8 +415,13 @@ zipsink("new-archive.zip") do sink
 end
 ```
 
+NOTE: Even on Windows computers, directory names in ZIP files always use forward slash (`/`)
+as a directory separator. Backslash characters (`\`) are treated as literal backslashes
+in the directory or filename, so `mkdir(sink, "dir\\file")` will create a single file named
+`dir\file` and _not_ a directory.
+
 The `mkdir` and `mkpath` methods return the number of bytes written to the archive, 
-including the Local File Header required to define the directory, but excluding the
+including the Local File Header required to define the directory, but _excluding_ the
 Central Directory Header data (that will be written when the sink is closed).
 
 The sink keeps track of which directories have been defined and skips creating directories
@@ -425,13 +431,13 @@ that already exist, as this example demonstrates:
 using ZipStreams
 
 zipsink("new-archive.zip") do sink
-    a = mkdir(sink, "dir1/")
+    a = mkdir(sink, "dir1/")  # returns the number of bytes written to the archive
     @assert a > 0
     b = mkdir(sink, "dir1/")
-    @assert b == 0
+    @assert b == 0  # dir1 already exists, so nothing is written
     c = mkpath(sink, "dir1/dir2")  # dir1 already exists, so do not recreate it
-    d = mkpath(sink, "dir3/dir4")  # dir3 has to be created
-    @assert d > c
+    d = mkpath(sink, "dir3/dir4")  # dir3 has to be created along with dir4
+    @assert d > c  # the second call creates two directories, so more bytes are written
 end
 ```
 
@@ -454,13 +460,13 @@ zipsink("new-archive.zip") do sink
 end
 ```
 
-Relative directory names `.` or `..` are interpreted as directories named `.` or `..` and
+Relative directory names `.` or `..` are interpreted as directories literally named `.` or `..` and
 _not_ as relative paths. The root directory of the archive is unnamed, so attempts to
 create a directory named `/` will be ignored. Attempting to create an unnamed subdirectory
 will result in the unnamed subdirectory being ignored (e.g., `mkpath(sink, "dir1//dir2")` 
 will do the same thing as `mkpath(sink, "dir1/dir2")`). By rule, attempting to make a
 directory that appears to begin with a Windows drive specifier, even on a non-Windows OS,
-will throw an error.
+will throw an error (per 4.4.17 of the APPNOTE document).
 
 ```julia
 using ZipStreams
@@ -479,7 +485,7 @@ zipsink("new-archive.zip") do sink
         @error "exception caught" exception=e
     end
     try
-        mkpath(sink, "c:/dir1")  # fails for the same reason: slash direction doesn't matter
+        mkpath(sink, "q:dir1")  # fails for the same reason: the slash at the end doesn't matter
     catch e
         @error "exception caught" exception=e
     end
