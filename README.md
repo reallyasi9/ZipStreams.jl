@@ -29,8 +29,8 @@ embedded systems or cloud-based micro-instances. To make matters worse, ZIP64
 archives can be up to 16 EB (2^64 bytes) in size, which can easily overwhelm even
 the largest of modern supercomputers.
 
-However, the ZIP archive specification also requires a "Local File Header" that
-preceding the (possibly compressed) file data of every file in the archive. The
+However, the ZIP archive specification also requires a "Local File Header" to
+precede the (possibly compressed) file data of every file in the archive. The
 Local File Header contains enough information to allow a reader to extract the
 file and perform simple error checking as long as three conditions are met:
 1. The information in the Local File Header is correctly specified. The Central
