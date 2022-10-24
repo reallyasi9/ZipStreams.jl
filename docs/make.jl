@@ -1,10 +1,11 @@
 using Documenter
 using ZipStreams
 
+DocMeta.setdocmeta!(ZipStreams, :DocTestSetup, :(using ZipStreams); recursive=true)
 makedocs(
     sitename = "ZipStreams",
     format = Documenter.HTML(),
-    modules = [ZipStreams],
+    # modules = [ZipStreams],
     pages = [
         "Overview" => "index.md",
         "Reading from Sources" => "sources.md",

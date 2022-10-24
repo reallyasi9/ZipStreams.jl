@@ -53,13 +53,18 @@ function zipfilesource(f::F, info::ZipFileInformation, io::IO) where {F <: Funct
 end
 
 """
-    validate(zf)
+    validate(zf::ZipFileSource)
 
 Validate that the contents read from an archived file match the information stored
-in the header and return the data read.
+in the Local File Header and return the data read.
 
-When called, this method will read through the remainder of the archived file
-until EOF is reached.
+If the contents of the file do not match the information in the Local File Header, the
+method will throw an error. The method checks that the compressed and uncompressed file
+sizes match what is in the header, and that the CRC-32 of the compressed data matches what
+is reported in the header.
+
+This method will return the remainder of the raw file data that has not yet been read from
+the archive as a `Vector{UInt8}`.
 """
 function validate(zf::ZipFileSource)
     # read the remainder of the file
@@ -155,6 +160,9 @@ file information from the Central Directory at the end of the stream.
 `ZipArchiveSource` objects can be iterated. Each iteration returns an IO
 object that will lazily extract (and decompress) file data from the archive.
 
+Information about each file in the archive is stored in the `directory` property of the
+struct as the file is read from the archive.
+
 Create `ZipArchiveSource` objects using the [`zipsource`](@ref) function.
 """
 mutable struct ZipArchiveSource{S<:IO} <: IO
@@ -206,9 +214,6 @@ the lifetime of the argument.
     against the Central Directory using the `validate` method before beginning
     to trust the extracted files from uncontrolled sources.
 
-# Examples
-```jldoctest
-```
 """
 function zipsource(io::IO)
     stream = TranscodingStreams.NoopStream(io)
@@ -263,24 +268,15 @@ Base.isreadable(za::ZipArchiveSource) = isreadable(za.source)
 Base.iswritable(::ZipArchiveSource) = false
 
 """
-    validate(zs)
+    validate(zs::ZipArchiveSource)
 
 Validate the files in the archive `zs` against the Central Directory at the end of
 the archive and return all data read as a vector of byte vectors (one per file).
 
-Consumes all the remaining data in the source stream of `zs` and throws an
-exception if the file information read does not match the information in the
-Central Directory.
-
-!!! warning "Requires `validate_directory`"
-
-    Unless the archive is empty, this method is guaranteed to throw if `zs` was
-    not created with `validate_directory` equal to `true`.
-
-Throws an exception if the directory at the end of the `IO` source in the
-`ZipArchiveSource` does not match the files detected while reading the
-archive. If `zs` has the `validate_files` property set to `true`, this method will
-also validate the archived files with their own headers as they are read.
+This method consumes _all_ the remaining data in the source stream of `zs` and throws an
+exception if the file information read does not match the information in the Central
+Directory. Files that have already been consumed prior to calling this method will still
+be validated, even if their contents are not returned.
 
 See also [`validate(::ZipFileSource)`](@ref).
 """
@@ -321,7 +317,14 @@ function validate(zs::ZipArchiveSource)
     read(zs)
     return filedata
 end
+"""
+    iterate(zs::ZipArchiveSource)
 
+Iterate through files stored in an archive.
+
+Files in archive are iterated in archive order. Directories (files that have zero size and
+have names ending `'/'`) are skipped.
+"""
 function Base.iterate(zs::ZipArchiveSource, state::Int=0)
     if zs._no_more_files
         # nothing else to read (already saw the central directory)

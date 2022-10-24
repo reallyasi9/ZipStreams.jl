@@ -186,7 +186,13 @@ validate(zs)
 ```
 
 ## API
+```@docs
+ZipArchiveSource
+```
+
 ```@autodocs
 Modules = [ZipStreams]
+Public = true
+Private = false
 Pages = ["input_stream.jl"]
 ```

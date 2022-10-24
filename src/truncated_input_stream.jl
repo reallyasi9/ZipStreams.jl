@@ -1,9 +1,9 @@
 import Base: bytesavailable, close, eof, flush, isopen, isreadable, iswritable, unsafe_read, read
 
 """
-    TruncatedInputStream
+    TruncatedInputStream(io, bytes)
 
-A wrapper around an IO object that reads up to some fixed number of bytes.
+A wrapper around an `IO` object that reads up to some fixed number of bytes.
 """
 mutable struct TruncatedInputStream{T} <: IO
     source::T
