@@ -14,7 +14,7 @@ Julia `IO` object, but it is not writable.
 
 Here are some examples:
 
-### Iterating through files from an archive on disk
+## Iterating through files from an archive on disk
 
 This is perhaps the most common way to work with ZIP archives: reading them from disk and
 doing things with the contained files. Because `zipsource` reads from the beginning of the
@@ -102,7 +102,7 @@ end
 @assert isopen(io) == false
 ```
 
-### Verifying the content of ZIP archives
+## Verifying the content of ZIP archives
 
 A ZIP archive stores file sizes and checksums in two of three locations: one of 
 either immediately before the archived file data (in the "Local File Header")
@@ -188,11 +188,7 @@ validate(zs)
 ## API
 ```@docs
 ZipArchiveSource
-```
-
-```@autodocs
-Modules = [ZipStreams]
-Public = true
-Private = false
-Pages = ["input_stream.jl"]
+zipsource
+next_file
+validate
 ```
