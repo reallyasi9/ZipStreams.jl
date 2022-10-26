@@ -62,10 +62,6 @@ written to disk and the file can be added to the archive.
 It is automatically called by `close(zipoutarchive)` and the finalizer routine of
 `ZipFileSink` objects, but it is best practice to close the file manually
 when you have finished writing to it.
-
-# Examples
-```julia
-```
 """
 function Base.close(zipfile::ZipFileSink; _uncompressed_size::Union{UInt64,Nothing}=nothing)
     if zipfile._closed
@@ -194,10 +190,6 @@ Zip archive so that a proper Central Directory can be written at the end.
 
 Users should not call the `ZipArchiveSink` constructor: instead, use the
 [`zipsink`](@ref) method to create a new streaming archive.
-
-# Examples
-```julia
-```
 """
 mutable struct ZipArchiveSink{S<:IO} <: IO
     sink::S
@@ -229,24 +221,15 @@ end
 Open an `IO` stream of a Zip archive for writing data.
 
 # Positional arguments
-- `fname::AbstractString`: The name of a Zip archive file to open for writing.
-Will be created if the file does not exist. If the file does exist, it will be
-truncated before writing.
-- `io::IO`: An `IO` object that can be written to. The object will be closed when
-you call `close` on the returned object.
-- `f<:Function`: A unary function to which the opened stream will be passed. This
-method signature allows for `do` block usage. When called with the signature, the
-return value of `f` will be returned to the user.
+- `fname::AbstractString`: The name of a Zip archive file to open for writing. Will be created if the file does not exist. If the file does exist, it will be truncated before writing.
+- `io::IO`: An `IO` object that can be written to. The object will be closed when you call `close` on the returned object.
+- `f<:Function`: A unary function to which the opened stream will be passed. This method signature allows for `do` block usage. When called with the signature, the return value of `f` will be returned to the user.
 
 # Keyword arguments
-- `utf8::Bool=true`: Encode file names and comments with UTF-8 encoding. If
-`false`, follows the Zip standard of treating text as encoded in IBM437 encoding.
-- `comment::AbstractString=""`: A comment to store with the Zip archive. This
-information is stored in plain text at the end of the archive and does not affect
-the Zip archive in any other way. The comment is always stored using IBM437
-encoding.
+- `utf8::Bool=true`: Encode file names and comments with UTF-8 encoding. If `false`, follows the Zip standard of treating text as encoded in IBM437 encoding.
+- `comment::AbstractString=""`: A comment to store with the Zip archive. This information is stored in plain text at the end of the archive and does not affect the Zip archive in any other way. The comment is always stored using IBM437 encoding.
 
-!!! note "Using `IO` argument"
+!!! note "Using IO arguments"
 
     Passing an `IO` object as the first argument will use the object as-is,
     overwriting from the current position of the stream and writing the Central
@@ -319,14 +302,22 @@ end
 """
     mkdir(archive, path; comment="")
 
-Make a directory within a Zip archive.
+Make a single directory within a ZIP archive.
 
-If the parent directory does not exist, an error will be thrown. Use
-[`mkpath`](@ref) to create the entire directory tree at once. If given, the
-`comment` string will be added to the archive's metadata for the directory.
+Path elements in ZIP archives are separated by the forward slash character (`/`).
+Backslashes (`\\`) and dots (`.` and `..`) are treated as literal characters in the
+directory or file names. The final forward slash character will automatically be added to
+the directory name when this method is used.
 
-Directories in Zip archives are merely length zero files with names that end in
-the `'/'` character.
+If any parent directory in the path does not exist, an error will be thrown. Use
+[`mkpath`](@ref) to create the entire path at once, including parent paths. Empty directory
+names (`//`) will be ignored, as will directories that have already been created in the
+archive.
+
+The `comment` string will be added to the archive's metadata for the directory. It does not
+affect the stored data in any way.
+
+Returns the number of bytes written to the archive when creating the directory.
 """
 function Base.mkdir(ziparchive::ZipArchiveSink, path::AbstractString; comment::AbstractString="")
     paths = _split_norm_path(path)
@@ -368,14 +359,22 @@ end
 """
     mkpath(archive, path; comment="")
 
-Make a directory within a Zip archive.
+Make a directory and all its parent directories in a ZIP archive.
 
-If the parent directory does not exist, all parent paths will be created. If
-given, the `comment` string will be added to the archive's metadata for the final
-path element (all other created parent paths will have no comment).
+Path elements in ZIP archives are separated by the forward slash character (`/`).
+Backslashes (`\\`) and dots (`.` and `..`) are treated as literal characters in the
+directory or file names. The final forward slash character will automatically be added to
+the directory name when this method is used.
 
-Directories in Zip archives are merely length zero files with names that end in
-the `'/'` character.
+If any parent directory in the path does not exist, it will be created automatically. Empty
+directory names (`//`) will be ignored, as will directories that have already been created
+in the archive.
+
+The `comment` string will be added to the archive's metadata only for the last directory in
+the path. All other directories created by this method will have no comment. This does not
+affect the stored data in any way.
+
+Returns the number of bytes written to the archive when creating p.
 """
 function Base.mkpath(ziparchive::ZipArchiveSink, path::AbstractString; comment::AbstractString="")
     paths = _split_norm_path(path)
@@ -407,22 +406,11 @@ end
 
 Create a file within a Zip archive and return a handle for writing.
 
-
 # Keyword arguments
-- `compression::Union{UInt16,Symbol} = :deflate`: Can be one of `:deflate`,
-`:store`, or the associated codes defined by the Zip archive standard (`0x0008`
-or `0x0000`, respectively). Determines how the data is compressed when writing to
-the archive.
-- `utf8::Bool = true`: If `true`, the file name and comment will be written to the
-archive metadata encoded in UTF-8 strings, and a flag will be set in the metadata
-to instruct decompression programs to read these strings as such. If `false`, the
-default IBM437 encoding will be used. This does not affect the file data itself.
-- `comment::AbstractString = ""`: Comment metadata to add to the archive about the
-file. This does not affect the file data itself.
-- `data = nothing`: Data to write for all-at-once file writing. If this is not
-`nothing`, its will be written to the archive (using `write(io, data)`) all at
-once rather than streaming. The file object will be closed immediately, and
-`nothing` will be returned.
+- `compression::Union{UInt16,Symbol} = :deflate`: Can be one of `:deflate`, `:store`, or the associated codes defined by the Zip archive standard (`0x0008` or `0x0000`, respectively). Determines how the data is compressed when writing to the archive.
+- `utf8::Bool = true`: If `true`, the file name and comment will be written to the archive metadata encoded in UTF-8 strings, and a flag will be set in the metadata to instruct decompression programs to read these strings as such. If `false`, the default IBM437 encoding will be used. This does not affect the file data itself.
+- `comment::AbstractString = ""`: Comment metadata to add to the archive about the file. This does not affect the file data itself.
+- `make_path::Bool = false`: If `true`, any directories in `fname` will be created first. If `false` and any directory in the path does not exist, an exception will be thrown.
 
 !!! warning "Duplicate file names"
 
@@ -440,10 +428,6 @@ once rather than streaming. The file object will be closed immediately, and
     fields are not accurate in the Local File Header. The streaming reader relies
     on file size information in the Local File Header to know when to stop reading
     file data, thus the two methods are incompatable.
-
-# Examples
-```julia
-```
 """
 function Base.open(
     archive::ZipArchiveSink,
@@ -465,7 +449,7 @@ function Base.open(
 
     # 0. check for directories and deal with them accordingly
     if endswith(fname, ZIP_PATH_DELIMITER)
-        throw(ArgumentError("file names cannot end in '/'"))
+        throw(ArgumentError("file names cannot end in '$ZIP_PATH_DELIMITER'"))
     end
     path = split(fname, ZIP_PATH_DELIMITER, keepempty=false) # can't trust dirname on Windows
     if length(path) > 1
@@ -546,15 +530,15 @@ end
 """
     write_file(sink, fname, data; [keyword arguments])
 
-Archive data to a new file in the archive all at once.
+Archive `data` to a new file named `fname` in an archive sink all at once.
 
 This is a convenience method that will create a new file in the archive with name
-`filename` and write all of `data` to that file. The `data` argument can be anything
+`fname` and write all of `data` to that file. The `data` argument can be anything
 for which the method `write(io, data)` is defined.
 
-Returns nothing.
+Returns the number of bytes written to the archive.
 
-Keyword arguments are the same as those accepted by `open(sink, fname)`.
+Keyword arguments are the same as those accepted by [`open(::ZipArchiveSink, ::AbstractString)`](@ref).
 """
 function write_file(
     archive::ZipArchiveSink,

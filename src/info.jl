@@ -107,3 +107,5 @@ end
 info(zi::ZipFileInformation) = info(stdout, zi)
 info(io::IO, zf::ZipFileSource) = info(io, zf.info)
 info(zf::ZipFileSource) = info(stdout, zf)
+info(io::IO, zf::ZipFileSink) = info(io, zf.info)
+info(zf::ZipFileSink) = info(stdout, zf)

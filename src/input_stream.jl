@@ -268,12 +268,12 @@ Base.isreadable(za::ZipArchiveSource) = isreadable(za.source)
 Base.iswritable(::ZipArchiveSource) = false
 
 """
-    validate(zs::ZipArchiveSource)
+    validate(source::ZipArchiveSource)
 
-Validate the files in the archive `zs` against the Central Directory at the end of
+Validate the files in the archive `source` against the Central Directory at the end of
 the archive and return all data read as a vector of byte vectors (one per file).
 
-This method consumes _all_ the remaining data in the source stream of `zs` and throws an
+This method consumes _all_ the remaining data in the source stream of `source` and throws an
 exception if the file information read does not match the information in the Central
 Directory. Files that have already been consumed prior to calling this method will still
 be validated, even if their contents are not returned.
