@@ -448,7 +448,7 @@ once rather than streaming. The file object will be closed immediately, and
 function Base.open(
     archive::ZipArchiveSink,
     fname::AbstractString;
-    compression::Symbol = :deflate,
+    compression::Union{Symbol,UInt16} = :deflate,
     utf8::Bool = true,
     comment::AbstractString = "",
     make_path::Bool = false,
@@ -507,9 +507,9 @@ function Base.open(
     write(archive, local_file_header)
 
     # 2. set up compression stream
-    if _precalculated || compression == :store
+    if _precalculated || ccode == COMPRESSION_STORE
         codec = Noop()
-    elseif compression == :deflate
+    elseif ccode == COMPRESSION_DEFLATE
         codec = DeflateCompressor()
     else
         # How did I end up here?
@@ -560,7 +560,7 @@ function write_file(
     archive::ZipArchiveSink,
     fname::AbstractString,
     data;
-    compression::Symbol = :deflate,
+    compression::Union{Symbol,UInt16} = :deflate,
     kwargs...
     )
 
@@ -569,9 +569,10 @@ function write_file(
     write(buffer, data)
     raw_data = take!(buffer)
     uncompressed_size = sizeof(raw_data) % UInt64
-    if compression == :deflate
+    ccode = compression_code(compression)
+    if ccode == COMPRESSION_DEFLATE
         compressed_data = transcode(DeflateCompressor, raw_data)
-    elseif compression == :store
+    elseif ccode == COMPRESSION_STORE
         compressed_data = raw_data
     else
         error("undefined compression type $compression")
