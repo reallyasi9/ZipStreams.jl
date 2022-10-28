@@ -63,12 +63,20 @@ It is automatically called by `close(zipoutarchive)` and the finalizer routine o
 `ZipFileSink` objects, but it is best practice to close the file manually
 when you have finished writing to it.
 """
-function Base.close(zipfile::ZipFileSink; _uncompressed_size::Union{UInt64,Nothing}=nothing)
+function Base.close(
+    zipfile::ZipFileSink;
+    _uncompressed_size::Union{UInt64,Nothing}=nothing,
+    _crc::Union{UInt32,Nothing}=nothing,
+    )
     if zipfile._closed
         @debug "File already closed"
         return
     end
-    crc = zipfile._crc32
+    if !isnothing(_crc)
+        crc = _crc
+    else
+        crc = zipfile._crc32
+    end
     @debug "Flushing writes to file" bytes=zipfile._bytes_written
     write(zipfile.sink, TranscodingStreams.TOKEN_END)
     flush(zipfile.sink)
@@ -562,11 +570,11 @@ function write_file(
         error("undefined compression type $compression")
     end
     compressed_size = sizeof(compressed_data) % UInt64
-    crc = crc32(compressed_data)
+    crc = crc32(raw_data)
 
     io = Base.open(archive, fname; _precalculated=true, _uncompressed_size=uncompressed_size, _compressed_size=compressed_size, _crc=crc, kwargs...)
     n_written = write(io, compressed_data)
-    close(io; _uncompressed_size=uncompressed_size)
+    close(io; _uncompressed_size=uncompressed_size, _crc=crc)
 
     return n_written
 end
