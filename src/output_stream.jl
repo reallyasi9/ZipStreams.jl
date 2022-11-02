@@ -3,6 +3,43 @@ import Base: open, close, mkdir, mkpath, write, unsafe_write, flush, isopen, isw
 using Dates
 using TranscodingStreams
 
+# to allow circular references
+abstract type AbstractZipFileSink <: IO end
+
+"""
+    ZipArchiveSink
+
+A struct for appending to Zip archives.
+
+Zip archives are optimized for appending to the end of the archive. This struct
+is used in tandem with library functions to keep track of what is appended to a
+Zip archive so that a proper Central Directory can be written at the end.
+
+Users should not call the `ZipArchiveSink` constructor: instead, use the
+[`zipsink`](@ref) method to create a new streaming archive.
+"""
+mutable struct ZipArchiveSink{S<:AbstractZipFileSink} <: IO
+    sink::TranscodingStream
+    directory::Vector{CentralDirectoryHeader}
+
+    utf8::Bool
+    comment::String
+
+    _folders_created::Set{String}
+    _open_file::Ref{S}
+    _is_closed::Bool
+end
+
+function Base.show(io::IO, za::ZipArchiveSink)
+    nbytes = bytes_written(za)
+    entries = length(za.directory)
+    byte_string = "byte" * (nbytes == 1 ? "" : "s")
+    entries_string = "entr" * (nbytes == 1 ? "y" : "ies")
+    eof_string = isopen(za) ? "" : ", closed"
+    print(io, "ZipArchiveSink(<$nbytes $byte_string, $entries $entries_string written$eof_string>)")
+    return
+end
+
 """
     ZipFileSink{S,R}([arguments])
 
@@ -24,29 +61,31 @@ automatically close the previous file before opening the new file.
 You should not call the struct constructor directly: instead, use
 `open(archive, filename)`.
 """
-mutable struct ZipFileSink{S<:IO,R<:IO} <: IO
+mutable struct ZipFileSink{S<:TranscodingStream} <: AbstractZipFileSink
     sink::S
     info::ZipFileInformation
     comment::String
     offset::UInt64
 
-    _raw_sink::R
+    # for writing data to the parent archive on close
+    _raw_sink::ZipArchiveSink
     _crc32::UInt32
     # don't close twice
     _closed::Bool
 end
 
 function Base.show(io::IO, zf::ZipFileSink)
-    fname = zf.info.name
-    compression = compression_string(zf.info.compression_method)
+    info = zf.info
+    fname = info.name
+    compression = compression_string(info.compression_method)
     csize = bytes_written(zf)
-    if zf.info.compression_method == compression_code(:store) || usize == 0
+    if info.compression_method == compression_code(:store)
         size_string = human_readable_bytes(csize)
     else
         usize = uncompressed_bytes_written(zf)
         size_string = @sprintf("%s, %s compressed (%0.2f%%)", human_readable_bytes(usize), human_readable_bytes(csize), csize/usize)
     end
-    eof_string = zf._closed ? ", closed" : ""
+    eof_string = isopen(zf) ? "" : ", closed"
     print(io, "ZipFileSink(<$fname> $compression $size_string written$eof_string)")
     return
 end
@@ -64,28 +103,17 @@ It is automatically called by `close(zipoutarchive)` and the finalizer routine o
 when you have finished writing to it.
 """
 function Base.close(
-    zipfile::ZipFileSink;
-    _uncompressed_size::Union{UInt64,Nothing}=nothing,
-    _crc::Union{UInt32,Nothing}=nothing,
+    zipfile::ZipFileSink,
     )
-    if zipfile._closed
+    if !isopen(zipfile)
         @debug "File already closed"
         return
     end
-    if !isnothing(_crc)
-        crc = _crc
-    else
-        crc = zipfile._crc32
-    end
-    @debug "Flushing writes to file" bytes=zipfile._bytes_written
+    crc = zipfile._crc32
     write(zipfile.sink, TranscodingStreams.TOKEN_END)
     flush(zipfile.sink)
     compressed_size = bytes_written(zipfile)
-    if isnothing(_uncompressed_size)
-        uc_size = uncompressed_bytes_written(zipfile)
-    else
-        uc_size = _uncompressed_size
-    end
+    uc_size = uncompressed_bytes_written(zipfile)
     # FIXME: Not atomic!
     # NOTE: not standard per se, but more common than not to use a signature here.
     if zipfile.info.descriptor_follows
@@ -149,7 +177,7 @@ function Base.unsafe_write(zf::ZipFileSink, p::Ptr{UInt8}, n::UInt)
 end
 
 Base.flush(zf::ZipFileSink) = flush(zf.sink)
-Base.isopen(zf::ZipFileSink) = isopen(zf.sink)
+Base.isopen(zf::ZipFileSink) = !zf._closed && isopen(zf.sink)
 Base.isreadable(zf::ZipFileSink) = false
 Base.iswritable(zf::ZipFileSink) = !zf._closed && iswritable(zf.sink)
 
@@ -185,40 +213,6 @@ function uncompressed_bytes_written(zf::ZipFileSink)
     stat = TranscodingStreams.stats(zf.sink)
     offset = stat.in % UInt64
     return offset
-end
-
-"""
-    ZipArchiveSink
-
-A struct for appending to Zip archives.
-
-Zip archives are optimized for appending to the end of the archive. This struct
-is used in tandem with library functions to keep track of what is appended to a
-Zip archive so that a proper Central Directory can be written at the end.
-
-Users should not call the `ZipArchiveSink` constructor: instead, use the
-[`zipsink`](@ref) method to create a new streaming archive.
-"""
-mutable struct ZipArchiveSink{S<:IO} <: IO
-    sink::S
-    directory::Vector{CentralDirectoryHeader}
-
-    utf8::Bool
-    comment::String
-
-    _folders_created::Set{String}
-    _open_file::Ref{ZipFileSink}
-    _is_closed::Bool
-end
-
-function Base.show(io::IO, za::ZipArchiveSink)
-    nbytes = bytes_written(za)
-    entries = length(za.directory)
-    byte_string = "byte" * (nbytes == 1 ? "" : "s")
-    entries_string = "entr" * (nbytes == 1 ? "y" : "ies")
-    eof_string = isopen(za) ? "" : ", closed"
-    print(io, "ZipArchiveSink(<$nbytes $byte_string, $entries $entries_string written$eof_string>)")
-    return
 end
 
 """
@@ -268,10 +262,17 @@ function zipsink(
     return z
 end
 
-function zipsink(f::F, args...; kwargs...) where {F<:Function}
-    zs = zipsink(args...; kwargs...)
+function zipsink(f::F, sink::IO; kwargs...) where {F<:Function}
+    zs = zipsink(sink; kwargs...)
     val = f(zs)
-    close(zs)
+    close(zs; close_sink=false)
+    return val
+end
+
+function zipsink(f::F, fname::AbstractString; kwargs...) where {F<:Function}
+    zs = zipsink(fname; kwargs...)
+    val = f(zs)
+    close(zs; close_sink=true)
     return val
 end
 
@@ -287,6 +288,8 @@ function Base.close(archive::ZipArchiveSink; close_sink::Bool=true)
     stat = TranscodingStreams.stats(archive.sink)
     startpos = stat.transcoded_out
     write_directory(archive.sink, archive.directory; startpos=startpos, comment=archive.comment, utf8=archive.utf8)
+    # sync writes
+    flush(archive)
     if close_sink
         close(archive.sink)
     end
@@ -444,10 +447,6 @@ function Base.open(
     utf8::Bool = true,
     comment::AbstractString = "",
     make_path::Bool = false,
-    _uncompressed_size::UInt64 = UInt64(0),
-    _compressed_size::UInt64 = UInt64(0),
-    _crc::UInt32 = CRC32_INIT,
-    _precalculated::Bool = false,
 )
     # warn if file already open
     if isassigned(archive._open_file)
@@ -476,20 +475,14 @@ function Base.open(
     # get the offset before the local header is written
     flush(archive)
     offset = bytes_written(archive)
-    # Branch: if writing all at once, use precalculated size
-    if _precalculated
-        use_descriptor = false
-        zip64 = offset >= typemax(UInt32) || _uncompressed_size >= typemax(UInt32) || _compressed_size >= typemax(UInt32)
-    else
-        use_descriptor = true
-        zip64 = true # always use Zip64 if size is unknown
-    end
+    use_descriptor = true
+    zip64 = true # always use Zip64 if size is unknown
     info = ZipFileInformation(
         ccode,
-        _uncompressed_size,
-        _compressed_size,
+        0,
+        0,
         now(),
-        _crc,
+        CRC32_INIT,
         fname,
         use_descriptor,
         utf8,
@@ -499,7 +492,7 @@ function Base.open(
     write(archive, local_file_header)
 
     # 2. set up compression stream
-    if _precalculated || ccode == COMPRESSION_STORE
+    if ccode == COMPRESSION_STORE
         codec = Noop()
     elseif ccode == COMPRESSION_DEFLATE
         codec = DeflateCompressor()
@@ -553,28 +546,83 @@ function write_file(
     fname::AbstractString,
     data;
     compression::Union{Symbol,UInt16} = :deflate,
-    kwargs...
+    utf8::Bool = true,
+    comment::AbstractString = "",
+    make_path::Bool = false,
     )
 
-    # 0. Compress the data if necessary
+    # warn if file already open
+    if isassigned(archive._open_file)
+        @warn "Opening a new file in an archive closes the previously opened file" previous=archive._open_file[].info
+        close(archive._open_file[])
+    end
+
+    # 0. check for directories and deal with them accordingly
+    if endswith(fname, ZIP_PATH_DELIMITER)
+        throw(ArgumentError("file names cannot end in '$ZIP_PATH_DELIMITER'"))
+    end
+    path = split(fname, ZIP_PATH_DELIMITER, keepempty=false) # can't trust dirname on Windows
+    if length(path) > 1
+        parent = join(path[1:end-1], ZIP_PATH_DELIMITER)
+        if parent ∉ archive._folders_created
+            if make_path
+                mkpath(archive, join(path[1:end-1], ZIP_PATH_DELIMITER))
+            else
+                throw(ArgumentError("parent path '$parent' does not exist"))
+            end
+        end
+    end
+
+    # 1. write the raw data to a buffer
     buffer = IOBuffer()
-    write(buffer, data)
-    raw_data = take!(buffer)
-    uncompressed_size = sizeof(raw_data) % UInt64
     ccode = compression_code(compression)
-    if ccode == COMPRESSION_DEFLATE
-        compressed_data = transcode(DeflateCompressor, raw_data)
-    elseif ccode == COMPRESSION_STORE
-        compressed_data = raw_data
+    if ccode == COMPRESSION_STORE
+        codec = Noop()
+    elseif ccode == COMPRESSION_DEFLATE
+        codec = DeflateCompressor()
     else
+        # How did I end up here?
         error("undefined compression type $compression")
     end
-    compressed_size = sizeof(compressed_data) % UInt64
-    crc = crc32(raw_data)
+    filesink = TranscodingStream(codec, buffer)
+    csink = CRC32Sink(CRC32_INIT, filesink)
+    write(csink, data)
+    write(csink, TranscodingStreams.TOKEN_END)
+    flush(csink)
 
-    io = Base.open(archive, fname; _precalculated=true, _uncompressed_size=uncompressed_size, _compressed_size=compressed_size, _crc=crc, kwargs...)
-    n_written = write(io, compressed_data)
-    close(io; _uncompressed_size=uncompressed_size, _crc=crc)
+    # 2. write local header to parent
+    crc = csink.crc32
+    stats = TranscodingStreams.stats(filesink)
+    ubytes = stats.in % UInt64
+    cbytes = stats.out % UInt64
+
+    # get the offset before the local header is written
+    flush(archive)
+    offset = bytes_written(archive)
+    use_descriptor = false
+    zip64 = offset >= typemax(UInt32) || ubytes >= typemax(UInt32) || cbytes >= typemax(UInt32)
+
+    info = ZipFileInformation(
+        ccode,
+        ubytes,
+        cbytes,
+        now(),
+        crc,
+        fname,
+        use_descriptor,
+        utf8,
+        zip64,
+    )
+    local_file_header = LocalFileHeader(info)
+    write(archive, local_file_header)
+
+    # 3. write the data
+    n_written = write(archive, take!(buffer))
+
+    # 4. Add the entry to the directory
+    is_dir = false
+    cd_header = CentralDirectoryHeader(info, offset, comment, is_dir)
+    push!(archive.directory, cd_header)
 
     return n_written
 end
