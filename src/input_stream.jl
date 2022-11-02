@@ -282,7 +282,10 @@ See also [`validate(::ZipFileSource)`](@ref).
 """
 function validate(zs::ZipArchiveSource)
     # validate remaining files
-    filedata = mapreduce(validate, push!, zs; init=Vector{Vector{UInt8}}())
+    filedata = Vector{Vector{UInt8}}()
+    for file in zs
+        push!(filedata, validate(file))
+    end
 
     # Guaranteed to be after the last local header found,
     # maybe after the central directory?
