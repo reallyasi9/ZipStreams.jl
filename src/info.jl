@@ -30,10 +30,12 @@ function info(io::IO, za::ZipArchiveSource)
         if n_files != 1
             print(io, "s")
         end
-        if total_uc > 0
-            @printf(io, ", %s uncompressed, %s compressed: %5.1f%%", human_readable_bytes(total_uc), human_readable_bytes(total_c), (total_uc - total_c) * 100 / total_uc)
+        print(io, ", $(human_readable_bytes(total_uc)) uncompressed, $(human_readable_bytes(total_c)) compressed")
+        if total_uc >= total_c && total_uc > 0
+            @printf(io, ": %5.1f%%", (total_uc - total_c) * 100 / total_uc)
         end
     end
+    println(io)
     return 
 end
 
