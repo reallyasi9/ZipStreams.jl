@@ -102,6 +102,7 @@ Sink
 necessarily implement random access or seek operations, nor does it necessarily
 support read operations.
 
+
 ## Notes and aspirations
 
 This package was inspired by frustrations at using more standard ZIP archive
@@ -112,7 +113,7 @@ the history of this repository, much of the work here started as a fork of
 that package. Because of that, I am grateful to [Fazlul Shahriar](https://github.com/fhs)
 for programming and making available `ZipFile.jl`.
 
-### To do
+## To do
 
 * ~~Document `zipsink` and `open` writing functionality~~
 * Add Documenter.jl hooks
@@ -121,6 +122,4 @@ for programming and making available `ZipFile.jl`.
 * ~~Mock read-only and write-only streams for testing~~
 * ~~Add all-at-once file writing~~
 * ~~Make the user responsible for closing files if `open() do x ... end` syntax is not used.~~
-* (1.1) Add readavailable method to ZipFileSource
-* (1.1) Add unzip and zip convenience methods
 * (2.0) Add ability to read files using Data Descriptors
