@@ -42,6 +42,32 @@ zipsink("new-archive.zip") do sink  # create a new archive on disk and truncate 
 end  # automatically write the Central Directory and close the archive
 ```
 
+Note that the `IO` method does not automatically close the `IO` object after the `do` block
+ends. The caller of that signature is responsible for the lifetime of the `IO` object. The
+`IO` object can be closed before the end of the `do` block by calling `close` on the sink.
+Additional writes to a closed sink will cause an `ArgumentError` to be thrown, but closing
+a closed sink is a noop, as these examples show:
+
+```julia
+using ZipStreams
+
+io = IOBuffer()
+zipsink(io) do sink
+    open(sink, "hello.txt") do f
+        write(f, "Hello, Julia!")
+    end
+end
+@assert isopen(io) == true
+
+zipsink(io) do sink
+    open(sink, "goodbye.txt") do f
+        write(f, "Good bye, Julia!")
+    end
+    close(sink)
+end
+@assert isopen(io) == false
+```
+
 Because the data are streamed to the archive, you can only have one file open for writing
 at a time in a given archive. If you try to open a new file before closing the previous
 file, a warning will be printed to the console and the previous file will automatically be
