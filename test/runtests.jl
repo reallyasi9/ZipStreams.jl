@@ -324,7 +324,7 @@ end
             @test write(f, FILE_CONTENT) == 13
             close(f)
             close(archive; close_sink=false)
-            @test buffer.size == 72
+            @test buffer.size == 173
 
             readme = IOBuffer(take!(buffer))
             skip(readme, 4)
@@ -345,7 +345,7 @@ end
             @test write(f, FILE_CONTENT) == 13
             close(f)
             close(archive; close_sink=false)
-            @test buffer.size == 74
+            @test buffer.size == 175
 
             readme = IOBuffer(take!(buffer))
             skip(readme, 4)
@@ -379,14 +379,14 @@ end
             archive = zipsink(buffer)
             write_file(archive, "hello.txt", FILE_CONTENT)
             close(archive; close_sink=false)
-            @test buffer.size == 54
+            @test buffer.size == 131
 
             readme = IOBuffer(take!(buffer))
             skip(readme, 4)
             header = read(readme, ZipStreams.LocalFileHeader)
             @test header.info.compressed_size == sizeof(DEFLATED_FILE_CONTENT)
             @test header.info.compression_method == ZipStreams.COMPRESSION_DEFLATE
-            @test header.info.crc32 == ZipStreams.crc32(DEFLATED_FILE_CONTENT)
+            @test header.info.crc32 == ZipStreams.crc32(FILE_CONTENT)
             @test header.info.descriptor_follows == false
             @test header.info.name == "hello.txt"
             @test header.info.uncompressed_size == sizeof(FILE_CONTENT)
