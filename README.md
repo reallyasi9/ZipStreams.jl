@@ -115,7 +115,8 @@ for programming and making available `ZipFile.jl`.
 ### To do
 
 * ~~Document `zipsink` and `open` writing functionality~~
-* Add Documenter.jl hooks
+* ~~Add Documenter.jl hooks~~
+* Add Travis.ci Documenter.jl publishing
 * Add benchmarks
 * Convert examples in documentation to tests
 * ~~Mock read-only and write-only streams for testing~~
