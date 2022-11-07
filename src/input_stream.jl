@@ -1,4 +1,4 @@
-import Base: HasEltype, IteratorEltype, IteratorSize, SizeUnknown, bytesavailable, close, eltype, eof, iterate, isopen, isreadable, iswritable, position, read, seek, show, skip, unsafe_read
+import Base: HasEltype, IteratorEltype, IteratorSize, SizeUnknown, bytesavailable, close, eltype, eof, iterate, isopen, isreadable, iswritable, position, read, readavailable, seek, show, skip, unsafe_read
 using Logging
 using Printf
 using TranscodingStreams
@@ -119,6 +119,7 @@ Base.iswritable(::ZipFileSource) = false
 Base.isopen(zf::ZipFileSource) = isopen(zf.source)
 Base.bytesavailable(zf::ZipFileSource) = bytesavailable(zf.source)
 Base.close(::ZipFileSource) = nothing # closing doesn't do anything
+Base.readavailable(zf::ZipFileSource) = read(zf)
 
 function bytes_read(zf::ZipFileSource)
     stats = TranscodingStreams.stats(zf.source)

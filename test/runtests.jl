@@ -427,3 +427,14 @@ end
     @test read(zf, String) == FILE_CONTENT
     close(source)
 end
+
+@testset "Stream-to-Archive IO" begin
+    buffer = IOBuffer()
+    zipsink(buffer) do sink
+        open(SINGLE_FILE, "r") do f
+            open(sink, "test.zip") do zf
+                @test write(zf, f) == filesize(f)
+            end
+        end
+    end
+end
