@@ -1,5 +1,6 @@
 """
-    zip_files(out_filename::AbstractString, in_filenames; relative_path=".", [keyword_args])
+    zip_files(out_filename, files; [keyword_args])
+    zip_files(out_filename, dir; recursive=false, [keyword_args])
 
 Create an archive from files on disk.
 
@@ -7,8 +8,12 @@ The archive `out_filename` will be created using the `zipsink` method with the g
 arguments. `in_filename` can be a single path or a vector of multiple paths on disk. The
 files will be written in the archive with paths matching the closest common relative path
 between the current directory (`"."`) and the full path of the file, so if `archive_filename`
-is "/a/b/archive.zip" and one of `in_filenames` is "/a/c/file", then the file will be witten
+is "/a/b/archive.zip" and one of `files` is "/a/c/file", then the file will be witten
 with the path "c/file".
+
+If `dir` is a directory and `recursive` is `true`, then all files and directories found when
+traversing the directory will be added to the archive. If `recursive` is `false` (the
+default), then subdirectories of `dir` will not be traversed.
 
 All files are written to the archive using the default arguments specified by
 `open(zipsink, fn)`. See [`open(::ZipArchiveSink, ::AbstractString)`](@ref) for more information.
@@ -30,7 +35,30 @@ function zip_files(archive_filename::AbstractString, input_filenames::AbstractVe
     return
 end
 
-zip_files(archive_filename::AbstractString, input_filename::AbstractString; kwargs...) = zip_archive(archive_filename, [input_filename]; kwargs...)
+function recurse_all_files(path::AbstractString)
+    files = String[]
+    for (root, dirs, files) in walkdir(path)
+        files = joinpath.(Ref(root), files)
+        for dir in dirs
+            append!(files, recurse_all_files(joinpath(root, dir)))
+        end
+    end
+    return files
+end
+
+function zip_files(archive_filename::AbstractString, input_filename::AbstractString; recursive::Bool=false, kwargs...)
+    if isdir(input_filename)
+        if recursive
+            files = recurse_all_files(input_filename)
+        else
+            files = filter(x -> !isdir(x), readdir(input_filename; join=true))
+        end
+    else
+        files = [input_filename]
+    end
+    zip_archive(archive_filename, files; kwargs...)
+end
+
 zip_file(archive_filename::AbstractString, input_filename::AbstractString; kwargs...) = zip_files(archive_filename, [input_filename]; kwargs...)
 
 function strip_dots(path::AbstractString)
