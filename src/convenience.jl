@@ -45,22 +45,28 @@ function strip_dots(path::AbstractString)
 end
 
 """
-    unzip_files(archive::AbstractString, outpath::AbstractString="."; make_path::Bool=false)
+    unzip_files(archive; output_path::AbstractString=".", make_path::Bool=false)
+    unzip_files(archive, files; [keyword_args])
 
-Unzip `archive` to `outpath`. If `make_path` is `true` and `outpath` does not exist, creat it.
+Unzip `files` from `archive`. If `files` is not given, extract all files.
 
 This method opens the archive and iterates through the archived files, writing them to disk
-to the directory tree rooted at `outpath`.
+to the directory tree rooted at `output_path`. If `make_path` is `true` and `output_path`
+does not exist, it will be created.
 
 See [`zipsource`](@ref) and [`next_file`](@ref) for more information about how the files are
 read from the archive.
 """
-function unzip_files(archive_filename::AbstractString, output_path::AbstractString="."; make_path::Bool=false)
+function unzip_files(archive_filename::AbstractString, files::AbstractVector{<:AbstractString}=String[]; output_path::AbstractString=".", make_path::Bool=false)
     if make_path
         mkpath(output_path)
     end
+    files_to_extract = Set(files)
     zipsource(archive_filename) do source
         for file in source
+            if !isempty(files_to_extract) && file.info.name ∉ files_to_extract
+                continue
+            end
             dirs = split(file.info.name, ZIP_PATH_DELIMITER)[1:end-1]
             if !isempty(dirs)
                 mkpath(joinpath(output_path, dirs...))
@@ -72,3 +78,6 @@ function unzip_files(archive_filename::AbstractString, output_path::AbstractStri
     end
     return
 end
+
+unzip_files(archive_filename::AbstractString, file::AbstractString; kwargs...) = unzip_files(archive_filename, [file]; kwargs...)
+unzip_file(archive_filename::AbstractString, file::AbstractString; kwargs...) = unzip_files(archive_filename, [file]; kwargs...)
