@@ -31,5 +31,6 @@ include("truncated_input_stream.jl")
 include("input_stream.jl")
 include("output_stream.jl")
 include("info.jl")
+include("convenience.jl")
 
 end # module
