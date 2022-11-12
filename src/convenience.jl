@@ -1,5 +1,5 @@
 """
-    zip_archive(out_filename::AbstractString, in_filenames; relative_path=".", [keyword_args])
+    zip_files(out_filename::AbstractString, in_filenames; relative_path=".", [keyword_args])
 
 Create an archive from files on disk.
 
@@ -15,7 +15,7 @@ All files are written to the archive using the default arguments specified by
 
 See [`zipsink`](@ref) for more information about the optional keyword arguments.
 """
-function zip_archive(archive_filename::AbstractString, input_filenames::AbstractVector{<:AbstractString}; kwargs...)
+function zip_files(archive_filename::AbstractString, input_filenames::AbstractVector{<:AbstractString}; kwargs...)
     zipsink(archive_filename; kwargs...) do sink
         for filename in input_filenames
             rpath = relpath(filename) # relative to . by default
@@ -30,7 +30,8 @@ function zip_archive(archive_filename::AbstractString, input_filenames::Abstract
     return
 end
 
-zip_archive(archive_filename::AbstractString, input_filename::AbstractString; kwargs...) = zip_archive(archive_filename, [input_filename]; kwargs...)
+zip_files(archive_filename::AbstractString, input_filename::AbstractString; kwargs...) = zip_archive(archive_filename, [input_filename]; kwargs...)
+zip_file(archive_filename::AbstractString, input_filename::AbstractString; kwargs...) = zip_files(archive_filename, [input_filename]; kwargs...)
 
 function strip_dots(path::AbstractString)
     first_non_dot_idx = 1
@@ -44,7 +45,7 @@ function strip_dots(path::AbstractString)
 end
 
 """
-    unzip_archive(archive::AbstractString, outpath::AbstractString="."; make_path::Bool=false)
+    unzip_files(archive::AbstractString, outpath::AbstractString="."; make_path::Bool=false)
 
 Unzip `archive` to `outpath`. If `make_path` is `true` and `outpath` does not exist, creat it.
 
@@ -54,7 +55,7 @@ to the directory tree rooted at `outpath`.
 See [`zipsource`](@ref) and [`next_file`](@ref) for more information about how the files are
 read from the archive.
 """
-function unzip_archive(archive_filename::AbstractString, output_path::AbstractString="."; make_path::Bool=false)
+function unzip_files(archive_filename::AbstractString, output_path::AbstractString="."; make_path::Bool=false)
     if make_path
         mkpath(output_path)
     end
