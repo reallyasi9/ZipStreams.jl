@@ -1,9 +1,10 @@
+using CodecZlib
 using Dates
+using LazyArtifacts
+using Random
 using Test
 using TranscodingStreams
-using CodecZlib
 using ZipStreams
-using Random
 
 import Base: bytesavailable, close, eof, isopen, read, seek, unsafe_read, unsafe_write
 
@@ -25,8 +26,6 @@ Base.unsafe_write(f::ForwardWriteOnlyIO, p::Ptr{UInt8}, n::UInt) = unsafe_write(
 Base.close(f::ForwardWriteOnlyIO) = close(f.io)
 Base.isopen(f::ForwardWriteOnlyIO) = isopen(f.io)
 # Base.eof(f::ForwardWriteOnlyIO) = eof(f.io)
-
-const THIS_DIR = dirname(@__FILE__)
 
 # All test files have the same content
 const FILE_CONTENT = "Hello, Julia!"
@@ -67,6 +66,7 @@ function subdir_info(; name::AbstractString="subdir/", datetime::DateTime=DateTi
         zip64,
     )
 end
+
 const FILE_INFO = file_info(; compression=ZipStreams.COMPRESSION_DEFLATE)
 const ZIP64_FILE_INFO = file_info(; compression=ZipStreams.COMPRESSION_DEFLATE, zip64=true)
 const SUBDIR_INFO = subdir_info()
@@ -84,19 +84,20 @@ const MULTI_INFO = ZipStreams.ZipFileInformation[
 ]
 
 # Simple tests
-const EMPTY_FILE = joinpath(THIS_DIR, "empty.zip")
-const SINGLE_FILE = joinpath(THIS_DIR, "single.zip")
-const MULTI_FILE = joinpath(THIS_DIR, "multi.zip")
-const RECURSIVE_FILE = joinpath(THIS_DIR, "zip.zip")
+const ARTIFACT_DIR = artifact"testfiles"
+const EMPTY_FILE = joinpath(ARTIFACT_DIR, "empty.zip")
+const SINGLE_FILE = joinpath(ARTIFACT_DIR, "single.zip")
+const MULTI_FILE = joinpath(ARTIFACT_DIR, "multi.zip")
+const RECURSIVE_FILE = joinpath(ARTIFACT_DIR, "zip.zip")
 
 # Zip64 format tests
-const ZIP64_F = joinpath(THIS_DIR, "single-f64.zip")
-const ZIP64_FC = joinpath(THIS_DIR, "single-f64-cd64.zip")
-const ZIP64_FE = joinpath(THIS_DIR, "single-f64-eocd64.zip")
-const ZIP64_FCE = joinpath(THIS_DIR, "single-f64-cd64-eocd64.zip")
-const ZIP64_C = joinpath(THIS_DIR, "single-cd64.zip")
-const ZIP64_E = joinpath(THIS_DIR, "single-cd64-eocd64.zip")
-const ZIP64_CE = joinpath(THIS_DIR, "single-eocd64.zip")
+const ZIP64_F = joinpath(ARTIFACT_DIR, "single-f64.zip")
+const ZIP64_FC = joinpath(ARTIFACT_DIR, "single-f64-cd64.zip")
+const ZIP64_FE = joinpath(ARTIFACT_DIR, "single-f64-eocd64.zip")
+const ZIP64_FCE = joinpath(ARTIFACT_DIR, "single-f64-cd64-eocd64.zip")
+const ZIP64_C = joinpath(ARTIFACT_DIR, "single-cd64.zip")
+const ZIP64_E = joinpath(ARTIFACT_DIR, "single-cd64-eocd64.zip")
+const ZIP64_CE = joinpath(ARTIFACT_DIR, "single-eocd64.zip")
 
 @test Any[] == detect_ambiguities(Base, Core, ZipStreams)
 
