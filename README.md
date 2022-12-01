@@ -1,6 +1,7 @@
 # ZipStreams
 
 [![](https://img.shields.io/badge/docs-stable-blue.svg)](https://USER_NAME.github.io/PACKAGE_NAME.jl/stable)
+[![](https://img.shields.io/badge/docs-dev-blue.svg)](https://USER_NAME.github.io/PACKAGE_NAME.jl/dev)
 
 A Julia package to burn through ZIP archives as fast as possible by ignoring
 standards just a little bit.
