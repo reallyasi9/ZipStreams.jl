@@ -1,7 +1,7 @@
 name = "ZipStreams"
 uuid = "d1ba5cbe-eaf4-46e4-b1fe-0fd0bb93243b"
 authors = ["Phil Killewald <reallyasi9@users.noreply.github.com>"]
-version = "1.0.0"
+version = "1.1.0"
 
 [deps]
 CodecZlib = "944b1d66-785c-5afd-91f1-9de20f533193"
@@ -19,9 +19,10 @@ julia = "1.7.0"
 
 [extras]
 BenchmarkTools = "6e4b80f9-dd63-53aa-95a3-0cdb28fa8baf"
+LazyArtifacts = "4af54fe1-eca0-43a8-85a7-787d91b784e3"
 Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 ZipFile = "a5390f91-8eb1-5f08-bee0-b1d1ffed6cea"
 
 [targets]
-test = ["Test", "BenchmarkTools", "Random", "ZipFile"]
+test = ["Test", "BenchmarkTools", "LazyArtifacts", "Random", "ZipFile"]

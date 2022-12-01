@@ -1,4 +1,8 @@
 # ZipStreams
+
+[![](https://img.shields.io/badge/docs-stable-blue.svg)](https://USER_NAME.github.io/PACKAGE_NAME.jl/stable)
+[![](https://img.shields.io/badge/docs-dev-blue.svg)](https://USER_NAME.github.io/PACKAGE_NAME.jl/dev)
+
 A Julia package to burn through ZIP archives as fast as possible by ignoring
 standards just a little bit.
 
@@ -115,12 +119,15 @@ for programming and making available `ZipFile.jl`.
 ### To do
 
 * ~~Document `zipsink` and `open` writing functionality~~
-* Add Documenter.jl hooks
+* ~~Add Documenter.jl hooks~~
+* (1.1) Add Travis.ci Documenter.jl publishing
 * Add benchmarks
 * Convert examples in documentation to tests
 * ~~Mock read-only and write-only streams for testing~~
 * ~~Add all-at-once file writing~~
 * ~~Make the user responsible for closing files if `open() do x ... end` syntax is not used.~~
-* (1.1) Add readavailable method to ZipFileSource
-* (1.1) Add unzip and zip convenience methods
-* (2.0) Add ability to read files using Data Descriptors
+* ~~(1.1) Add readavailable method to ZipFileSource~~
+* ~~(1.1) Add unzip_files and zip_files convenience methods~~
+* (1.1) Add tests for unzip_files and zip_files convenience methods
+* ~~(1.1) Use Artifacts to download reference ZIP files for tests~~
+* (2.0) Add ability to read files that use Data Descriptors
