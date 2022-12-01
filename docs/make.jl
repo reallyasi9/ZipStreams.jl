@@ -1,5 +1,13 @@
 using Documenter
+using JSON
 using ZipStreams
+
+function should_push_preview(event_path = get(ENV, "GITHUB_EVENT_PATH", nothing))
+    event_path === nothing && return false
+    event = JSON.parsefile(event_path)
+    labels = [x["name"] for x in event["pull_request"]["labels"]]
+    return "push_preview" in labels
+end
 
 DocMeta.setdocmeta!(ZipStreams, :DocTestSetup, :(using ZipStreams); recursive=true)
 makedocs(
@@ -20,4 +28,5 @@ makedocs(
 # for more information.
 deploydocs(
     repo = "github.com/reallyasi9/ZipStreams.jl.git",
+    push_preview = should_push_preview(),
 )
