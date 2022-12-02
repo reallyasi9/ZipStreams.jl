@@ -12,7 +12,7 @@ end
 DocMeta.setdocmeta!(ZipStreams, :DocTestSetup, :(using ZipStreams); recursive=true)
 makedocs(
     sitename = "ZipStreams",
-    format = Documenter.HTML(),
+    format = Documenter.HTML(edit_link = "main"),
     # modules = [ZipStreams],
     pages = [
         "Overview" => "index.md",
@@ -29,4 +29,5 @@ makedocs(
 deploydocs(
     repo = "github.com/reallyasi9/ZipStreams.jl.git",
     push_preview = should_push_preview(),
+    devbranch = "main",
 )
