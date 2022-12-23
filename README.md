@@ -1,7 +1,7 @@
 # ZipStreams
 
-[![](https://img.shields.io/badge/docs-stable-blue.svg)](https://USER_NAME.github.io/PACKAGE_NAME.jl/stable)
-[![](https://img.shields.io/badge/docs-dev-blue.svg)](https://USER_NAME.github.io/PACKAGE_NAME.jl/dev)
+[![](https://img.shields.io/badge/docs-stable-blue.svg)](https://reallyasi9.github.io/ZipStreams.jl/stable)
+[![](https://img.shields.io/badge/docs-dev-blue.svg)](https://reallyasi9.github.io/ZipStreams.jl/dev)
 
 A Julia package to burn through ZIP archives as fast as possible by ignoring
 standards just a little bit.
@@ -106,7 +106,7 @@ Sink
 necessarily implement random access or seek operations, nor does it necessarily
 support read operations.
 
-## Notes and aspirations
+## Notes
 
 This package was inspired by frustrations at using more standard ZIP archive
 reader/writers like [`ZipFile.jl`](https://github.com/fhs/ZipFile.jl). That's
@@ -115,19 +115,3 @@ standards-compliant than this package ever intends to be! As you can see from
 the history of this repository, much of the work here started as a fork of
 that package. Because of that, I am grateful to [Fazlul Shahriar](https://github.com/fhs)
 for programming and making available `ZipFile.jl`.
-
-### To do
-
-* ~~Document `zipsink` and `open` writing functionality~~
-* ~~Add Documenter.jl hooks~~
-* (1.1) Add Travis.ci Documenter.jl publishing
-* Add benchmarks
-* Convert examples in documentation to tests
-* ~~Mock read-only and write-only streams for testing~~
-* ~~Add all-at-once file writing~~
-* ~~Make the user responsible for closing files if `open() do x ... end` syntax is not used.~~
-* ~~(1.1) Add readavailable method to ZipFileSource~~
-* ~~(1.1) Add unzip_files and zip_files convenience methods~~
-* (1.1) Add tests for unzip_files and zip_files convenience methods
-* ~~(1.1) Use Artifacts to download reference ZIP files for tests~~
-* (2.0) Add ability to read files that use Data Descriptors

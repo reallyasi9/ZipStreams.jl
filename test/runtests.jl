@@ -28,7 +28,7 @@ Base.isopen(f::ForwardWriteOnlyIO) = isopen(f.io)
 # Base.eof(f::ForwardWriteOnlyIO) = eof(f.io)
 
 # All test files have the same content
-const FILE_CONTENT = "Hello, Julia!"
+const FILE_CONTENT = "Hello, Julia!\n"
 const DEFLATED_FILE_CONTENT = transcode(DeflateCompressor, FILE_CONTENT)
 function file_info(; name::AbstractString="hello.txt", descriptor::Bool=false, utf8::Bool=false, zip64::Bool=false, datetime::DateTime=DateTime(2022, 8, 18, 23, 21, 38), compression::UInt16=ZipStreams.COMPRESSION_STORE)
     uc_size = 13 % UInt64
@@ -322,10 +322,10 @@ end
             buffer = IOBuffer()
             archive = zipsink(buffer)
             f = open(archive, "hello.txt"; compression=:store)
-            @test write(f, FILE_CONTENT) == 13
+            @test write(f, FILE_CONTENT) == 14
             close(f)
             close(archive; close_sink=false)
-            @test buffer.size == 173
+            @test buffer.size == 174
 
             readme = IOBuffer(take!(buffer))
             skip(readme, 4)
@@ -343,10 +343,10 @@ end
             buffer = IOBuffer()
             archive = zipsink(buffer)
             f = open(archive, "hello.txt"; compression=:deflate)
-            @test write(f, FILE_CONTENT) == 13
+            @test write(f, FILE_CONTENT) == 14
             close(f)
             close(archive; close_sink=false)
-            @test buffer.size == 175
+            @test buffer.size == 176
 
             readme = IOBuffer(take!(buffer))
             skip(readme, 4)
@@ -380,7 +380,7 @@ end
             archive = zipsink(buffer)
             write_file(archive, "hello.txt", FILE_CONTENT)
             close(archive; close_sink=false)
-            @test buffer.size == 131
+            @test buffer.size == 132
 
             readme = IOBuffer(take!(buffer))
             skip(readme, 4)
@@ -400,15 +400,67 @@ end
 @testset "Archive iteration" begin
     @testset "next_file" begin
         @testset "Empty archive" begin
-
+            archive = zipsource(EMPTY_FILE)
+            f = next_file(archive)
+            @test isnothing(f)
+            close(archive)
         end
 
         @testset "Simple archive" begin
-
+            archive = zipsource(SINGLE_FILE)
+            f = next_file(archive)
+            @test !isnothing(f)
+            @test f.info == FILE_INFO
+            f = next_file(archive)
+            @test isnothing(f)
+            close(archive)
         end
 
         @testset "Multi archive" begin
+            archive = zipsource(MULTI_FILE)
+            for info in MULTI_INFO
+                if isdir(info)
+                    continue
+                end
+                f = next_file(archive)
+                @test !isnothing(f)
+                @test f.info == info
+            end
+            f = next_file(archive)
+            @test isnothing(f)
+            close(archive)
+        end
+    end
 
+    @testset "iterator" begin
+        @testset "Empty archive" begin
+            archive = zipsource(EMPTY_FILE)
+            for f in archive
+                @test false
+            end
+            close(archive)
+        end
+
+        @testset "Simple archive" begin
+            archive = zipsource(SINGLE_FILE)
+            for f in archive
+                @test !isnothing(f)
+                @test f.info == FILE_INFO
+            end
+            f = next_file(archive)
+            @test isnothing(f)
+            close(archive)
+        end
+
+        @testset "Multi archive" begin
+            archive = zipsource(MULTI_FILE)
+            for (f, info) in zip(archive, filter(x -> !isdir(x), MULTI_INFO))
+                @test !isnothing(f)
+                @test f.info == info
+            end
+            f = next_file(archive)
+            @test isnothing(f)
+            close(archive)
         end
     end
 end
@@ -437,5 +489,33 @@ end
                 @test write(zf, f) == filesize(f)
             end
         end
+    end
+end
+
+@testset "Convenient extract and archive" begin
+    tdir = mktempdir()
+    @testset "Unzip with unzip_files" begin
+        unzip_files(MULTI_FILE; output_path=tdir)
+        for info in MULTI_INFO
+            if isdir(info)
+                @test isdir(joinpath(tdir, info.name))
+            else
+                @test isfile(joinpath(tdir, info.name))
+                @test read(joinpath(tdir, info.name), String) == FILE_CONTENT
+            end
+        end
+    end
+    @testset "Zip back up with zip_files" begin
+        archive_name = tempname(tdir)
+        zip_files(archive_name, readdir(tdir; join=true))
+
+        archive = zipsource(archive_name)
+        # Cannot be streamed
+        # for (f, info) in zip(archive, filter(x -> !isdir(x), MULTI_INFO))
+        #     @test !isnothing(f)
+        #     @test f.info == info
+        # end
+        @test_throws ErrorException next_file(archive)
+        close(archive)
     end
 end
