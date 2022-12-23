@@ -400,15 +400,67 @@ end
 @testset "Archive iteration" begin
     @testset "next_file" begin
         @testset "Empty archive" begin
-
+            archive = zipsource(EMPTY_FILE)
+            f = next_file(archive)
+            @test isnothing(f)
+            close(archive)
         end
 
         @testset "Simple archive" begin
-
+            archive = zipsource(SINGLE_FILE)
+            f = next_file(archive)
+            @test !isnothing(f)
+            @test f.info == FILE_INFO
+            f = next_file(archive)
+            @test isnothing(f)
+            close(archive)
         end
 
         @testset "Multi archive" begin
+            archive = zipsource(MULTI_FILE)
+            for info in MULTI_INFO
+                if isdir(info)
+                    continue
+                end
+                f = next_file(archive)
+                @test !isnothing(f)
+                @test f.info == info
+            end
+            f = next_file(archive)
+            @test isnothing(f)
+            close(archive)
+        end
+    end
 
+    @testset "iterator" begin
+        @testset "Empty archive" begin
+            archive = zipsource(EMPTY_FILE)
+            for f in archive
+                @test false
+            end
+            close(archive)
+        end
+
+        @testset "Simple archive" begin
+            archive = zipsource(SINGLE_FILE)
+            for f in archive
+                @test !isnothing(f)
+                @test f.info == FILE_INFO
+            end
+            f = next_file(archive)
+            @test isnothing(f)
+            close(archive)
+        end
+
+        @testset "Multi archive" begin
+            archive = zipsource(MULTI_FILE)
+            for (f, info) in zip(archive, filter(x -> !isdir(x), MULTI_INFO))
+                @test !isnothing(f)
+                @test f.info == info
+            end
+            f = next_file(archive)
+            @test isnothing(f)
+            close(archive)
         end
     end
 end
