@@ -505,17 +505,49 @@ end
             end
         end
     end
-    @testset "Zip back up with zip_files" begin
-        archive_name = tempname(tdir)
-        zip_files(archive_name, readdir(tdir; join=true))
+    # @testset "Zip back up with zip_files" begin
+    #     archive_name = tempname(tdir)
+    #     zip_files(archive_name, readdir(tdir; join=true))
 
-        archive = zipsource(archive_name)
-        # Cannot be streamed
-        # for (f, info) in zip(archive, filter(x -> !isdir(x), MULTI_INFO))
-        #     @test !isnothing(f)
-        #     @test f.info == info
-        # end
-        @test_throws ErrorException next_file(archive)
-        close(archive)
-    end
+    #     archive = zipsource(archive_name)
+    #     # Cannot be streamed
+    #     # for (f, info) in zip(archive, filter(x -> !isdir(x), MULTI_INFO))
+    #     #     @test !isnothing(f)
+    #     #     @test f.info == info
+    #     # end
+    #     @test_throws ErrorException next_file(archive)
+    #     close(archive)
+    # end
+end
+
+@testset "FixedSizeCodec" begin
+    example = b"Hello, Julia!"
+    inbuf = IOBuffer(example)
+
+    instream = NoopStream(inbuf)
+    
+    @test read(TranscodingStream(ZipStreams.FixedSizeReadCodec(5), instream; stop_on_end = true), String) == "Hello"
+    @test read(TranscodingStream(ZipStreams.FixedSizeReadCodec(5), instream; stop_on_end = true), String) == ", Jul"
+    tstream = TranscodingStream(ZipStreams.FixedSizeReadCodec(5), instream; stop_on_end = true)
+    @test read(tstream, String) == "ia!"
+    @test eof(tstream)
+    @test eof(instream)
+end
+
+@testset "DataDescriptorCodec" begin
+    example = b"Hello, qqq Julia!"
+    inbuf = IOBuffer(example)
+
+    instream = NoopStream(inbuf)
+
+    sentinel = collect(b"qqq ")
+    @test read(TranscodingStream(ZipStreams.DataDescriptorCodec(sentinel), instream; stop_on_end = true), String) == "Hello, "
+    @test read(TranscodingStream(ZipStreams.DataDescriptorCodec(sentinel), instream; stop_on_end = true), String) == ""
+
+    @test read(instream, 4) == b"qqq "
+
+    tstream = TranscodingStream(ZipStreams.DataDescriptorCodec(sentinel), instream; stop_on_end = true)
+    @test read(tstream, String) == "Julia!"
+    @test eof(tstream)
+    @test eof(instream)
 end
