@@ -98,9 +98,9 @@ function Base.read(zf::ZipFileSource, ::Type{UInt8})
 end
 
 function Base.unsafe_read(zf::ZipFileSource, p::Ptr{UInt8}, nb::UInt64) 
-    n = unsafe_read(zf.source, p, nb)
-    zf._crc32 = crc32(p, n, zf._crc32)
-    return n
+    unsafe_read(zf.source, p, nb)
+    zf._crc32 = crc32(p, nb, zf._crc32)
+    return nothing
 end
 
 Base.eof(zf::ZipFileSource) = eof(zf.source)

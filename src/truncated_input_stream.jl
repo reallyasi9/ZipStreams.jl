@@ -36,5 +36,5 @@ function Base.unsafe_read(s::TruncatedInputStream, p::Ptr{UInt8}, n::UInt)
     # nb = min(s.bytes_remaining, n)
     unsafe_read(s.source, p, n)
     s.bytes_remaining -= n
-    return n
+    return nothing
 end
