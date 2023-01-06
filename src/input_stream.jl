@@ -12,12 +12,9 @@ A `ZipFileSource` implements `read(zf, UInt8)`, allowing all other basic read
 opperations to treat the object as if it were a file. Information about the
 archived file is stored in the `info` property.
 """
-mutable struct ZipFileSource{C<:TranscodingStreams.Codec} <: IO
+mutable struct ZipFileSource{S<:TranscodingStream} <: IO
     info::ZipFileInformation
-    raw_source::NoopStream
-    source::TranscodingStream{C}
-
-    _crc32::UInt32
+    source::S
 end
 
 function Base.show(io::IO, zf::ZipFileSource)
@@ -35,20 +32,30 @@ function Base.show(io::IO, zf::ZipFileSource)
 end
 
 function zipfilesource(info::ZipFileInformation, io::NoopStream)
+
+    # determine limiter to use
     if info.descriptor_follows
         if info.compressed_size != 0
             @warn "Data descriptor signalled in local file header, but size information present as well: data descriptor will be used, but extracted data may be corrupt" info.compressed_size
         end
-        truncation_codec = SentinelReadCodec(htol(bitarray(SIG_DATA_DESCRIPTOR)))
+        limiter = SentinelLimiter(htol(bitarray(SIG_DATA_DESCRIPTOR)))
     else
-        truncation_codec = FixedSizeReadCodec(info.compressed_size)
+        limiter = FixedSizeLimiter(info.compressed_size)
     end
-    # keep the input stream open after reaching the end just in case
-    stream = TranscodingStream(truncation_codec, io; stop_on_end=true)
-    if info.compression_method == COMPRESSION_DEFLATE
-        stream = TranscodingStream(CodecZlib.DeflateCompressor(), stream; stop_on_end=true)
+    # determine compression codec to use
+    if info.compression_method == COMPRESSION_STORE
+        compressor = Noop()
+    elseif info.compression_method == COMPRESSION_DEFLATE
+        compressor = ZlibDecompressor()
+    else
+        error("unsupported compression method $(info.compression_method)")
     end
-    return ZipFileSource(info, io, stream, CRC32_INIT)
+    
+    # attach the stats accumulator
+    # keep the input stream open after reaching the end to verify EOF
+    accumulator = ZipStatCodec(limiter, compressor)
+    stream = TranscodingStream(accumulator, io; stop_on_end=true)
+    return ZipFileSource(info, stream)
 end
 
 function zipfilesource(f::F, info::ZipFileInformation, io::NoopStream) where {F <: Function}
@@ -73,19 +80,18 @@ the archive as a `Vector{UInt8}`.
 function validate(zf::ZipFileSource)
     # read the remainder of the file
     data = read(zf)
-    stats = TranscodingStreams.stats(zf.source)
-    badcom = stats.transcoded_in != zf.info.compressed_size
-    badunc = stats.transcoded_out != zf.info.uncompressed_size
-    badcrc = zf._crc32 != zf.info.crc32
+    badcom = bytes_read(zf) != zf.info.compressed_size
+    badunc = uncompressed_bytes_read(zf) != zf.info.uncompressed_size
+    badcrc = zf.stream.codec.crc32_out != zf.info.crc32
 
     if badcom
-        @error "Compressed size check failed: expected $(zf.info.compressed_size), got $(stats.transcoded_in)"
+        @error "Compressed size check failed: expected $(zf.info.compressed_size), got $(bytes_read(zf))"
     end
     if badunc
-        @error "Uncompressed size check failed: expected $(zf.info.uncompressed_size), got $(stats.transcoded_out)"
+        @error "Uncompressed size check failed: expected $(zf.info.uncompressed_size), got $(uncompressed_bytes_read(zf))"
     end
     if badcrc
-        @error "CRC-32 check failed: expected $(zf.info.crc32), got $(zf._crc32)"
+        @error "CRC-32 check failed: expected $(zf.info.crc32), got $(zf.stream.codec.crc32_out)"
     end
     if badcom || badunc || badcrc
         error("validation failed")
@@ -96,48 +102,44 @@ function validate(zf::ZipFileSource)
 end
 
 function Base.read(zf::ZipFileSource, ::Type{UInt8})
-    x = read(zf.source, UInt8)
-    zf._crc32 = crc32([x], zf._crc32)
-    return x
+    return read(zf.source, UInt8)
 end
 
 function Base.unsafe_read(zf::ZipFileSource, p::Ptr{UInt8}, nb::UInt64) 
-    unsafe_read(zf.source, p, nb)
-    zf._crc32 = crc32(p, nb, zf._crc32)
-    return nothing
+    return unsafe_read(zf.source, p, nb)
 end
 
 # determine EOF based on the input stream type
-_is_true_eof(zf::ZipFileSource) = eof(zf.source)
+# function Base.eof(zf::ZipFileSource{FixedSizeReadCodec})
+#     state = zf.source.state
+#     return state.mode ∈ (:close, :stop)
+# end
+# function Base.eof(zf::ZipFileSource{SentinelReadCodec})
+#     if !eof(zf.source)
+#         return false
+#     end
+#     data = read(zf.raw_source, 24) # the sentinel is not consumed by the SentinelReadCodec
+#     # not enough data left: this can't be good...
+#     if length(data) < 24
+#         error("premature end of file detected when looking for Data Descriptor sentinel: data are likely corrupt")
+#     end
+#     sentinel_check = bytesle2int(UInt32, data[1:4]) == SIG_DATA_DESCRIPTOR
+#     crc_check = bytesle2int(UInt32, data[5:8]) == zf._crc32
+#     csize_check = bytesle2int(UInt64, data[9:16]) == bytes_read(zf)
+#     usize_check = bytesle2int(UInt64, data[17:24]) == uncompressed_bytes_read(zf)
+#     if !(sentinel_check && crc_check && csize_check && usize_check)
+#         # recreate the sentinel read codec and move on
+#         TranscodingStreams.unread(zf.raw_source, data)
+#         codec = SentinelReadCodec(htol(bitarray(SIG_DATA_DESCRIPTOR)); skip_first=true)
+#         accumulator = zf.source.codec
+#         accumulator.codec = codec
+#         zf.source = TranscodingStream(accumulator, zf.raw_source; stop_on_end=true)
+#         return false
+#     end
+#     return true
+# end
 
-function _is_true_eof(zf::ZipFileSource{SentinelReadCodec})
-    if !eof(zf.source)
-        return false
-    end
-    data = read(zf.raw_source, 24) # the sentinel is not consumed by the SentinelReadCodec
-    # not enough data left: this can't be good...
-    if length(data) < 24
-        error("premature end of file detected when looking for Data Descriptor sentinel: data are likely corrupt")
-    end
-    sentinel_check = bytesle2int(UInt32, data[1:4]) == SIG_DATA_DESCRIPTOR
-    crc_check = bytesle2int(UInt32, data[5:8]) == zf._crc32
-    csize_check = bytesle2int(UInt64, data[9:16]) == bytes_read(zf)
-    usize_check = bytesle2int(UInt64, data[17:24]) == uncompressed_bytes_read(zf)
-    if !(sentinel_check && crc_check && csize_check && usize_check)
-        # recreate the sentinel read codec and move on
-        TranscodingStreams.unread(zf.raw_source, data)
-        codec = SentinelReadCodec(htol(bitarray(SIG_DATA_DESCRIPTOR)); skip_first=true)
-        stream = TranscodingStream(codec, zf.raw_source; stop_on_end=true)
-        if zf.info.compression_method == COMPRESSION_DEFLATE
-            stream = TranscodingStream(CodecZlib.DeflateCompressor(), stream; stop_on_end=true)
-        end
-        zf.source = stream
-        return false
-    end
-    return true
-end
-
-Base.eof(zf::ZipFileSource) = _is_true_eof(zf)
+Base.eof(zf::ZipFileSource) = eof(zf.source)
 function Base.seek(::ZipFileSource, ::Integer)
     error("stream cannot seek")
 end
@@ -152,17 +154,17 @@ Base.isreadable(zf::ZipFileSource) = isreadable(zf.source)
 Base.iswritable(::ZipFileSource) = false
 Base.isopen(zf::ZipFileSource) = isopen(zf.source)
 Base.bytesavailable(zf::ZipFileSource) = bytesavailable(zf.source)
-Base.close(::ZipFileSource) = nothing # closing doesn't do anything
+# closes the source stream, but because it is opened with stop_on_end=true, the underlying
+# stream (zf.raw_source) remains open.
+Base.close(zf::ZipFileSource) = close(zf.source)
 Base.readavailable(zf::ZipFileSource) = read(zf)
 
 function bytes_read(zf::ZipFileSource)
-    stats = TranscodingStreams.stats(zf.source)
-    return stats.in % UInt64
+    return zf.source.codec.stats.bytes_out
 end
 
 function uncompressed_bytes_read(zf::ZipFileSource)
-    stats = TranscodingStreams.stats(zf.source)
-    return stats.out % UInt64
+    return zf.source.codec.stats.bytes_in
 end
 
 """

@@ -1,74 +1,43 @@
-import TranscodingStreams: expectedsize, startproc, process
+import TranscodingStreams: expectedsize, minoutsize, initialize, finalize, startproc, process
 
 using TranscodingStreams
 
-"""
-    FixedSizeReadCodec
+struct StatBlock
+    bytes_in::UInt64
+    bytes_out::UInt64
+    crc32_out::UInt32
+end
 
-A codec that reads a certain number of bytes, then teminates.
+# AbstractLimiter types T implement bytes_remaining(::T, in::Memory, stats::StatBlock)
+abstract type AbstractLimiter end
+
+"""
+    FixedSizeLimiter
+
+A limiter that counts the number of bytes availabe to read.
 
 Useful for reading ZIP files that tell you in the header how many bytes to read.
 """
-mutable struct FixedSizeReadCodec <: TranscodingStreams.Codec
-    bytes_remaining::Int
+struct FixedSizeLimiter <: AbstractLimiter
+    bytes::UInt64
 end
 
-function TranscodingStreams.expectedsize(codec::FixedSizeReadCodec, ::TranscodingStreams.Memory)
-    return codec.bytes_remaining
-end
-
-function TranscodingStreams.startproc(::FixedSizeReadCodec, mode::Symbol, error::TranscodingStreams.Error)
-    if mode != :read
-        error[] = ErrorException("codec is read-only")
-        return :error
-    end
-    return :ok
-end
-
-function TranscodingStreams.process(codec::FixedSizeReadCodec, input::TranscodingStreams.Memory, output::TranscodingStreams.Memory, ::TranscodingStreams.Error)
-    n = min(length(input), length(output), codec.bytes_remaining)
-    @debug "reading" n codec.bytes_remaining length(input) length(output)
-    if n <= 0
-        @debug "returning (0,0,:end)"
-        return (0,0,:end)
-    end
-    @debug "copying" output.ptr input.ptr n
-    unsafe_copyto!(output.ptr, input.ptr, n)
-    codec.bytes_remaining -= n
-    @debug "done copying" codec.bytes_remaining
-    if codec.bytes_remaining == 0
-        return (n,n,:end)
-    end
-    return (n,n,:ok)
+function bytes_remaining(limiter::FixedSizeLimiter, in::TranscodingStreams.Memory, stats::StatBlock)
+    return min(stats.bytes_in - limiter.bytes, length(in))
 end
 
 """
-    SentinelReadCodec
+    SentinelLimiter
 
-A codec that reads a file until a sentinel is found, then terminates.
+A limiter that signals the number of bytes until a sentinel is found.
 
-This is useful for reading ZIP files that use a data descriptor at the end.
+This is useful for reading ZIP files that use a data descriptor at the end. Will first
+report a number of bytes before a sentinel so that data can be read up to the sentinel, but
+if the first bytes are the start of a sentinel block, will check if the sentinel is valid
+based on the stats given.
 """
-struct SentinelReadCodec <: TranscodingStreams.Codec
+struct SentinelLimiter <: AbstractLimiter
     sentinel::Vector{UInt8}
-    buffer::Vector{UInt8}
-    skip_first::Bool
-end
-
-function SentinelReadCodec(sentinel::Vector{UInt8} = hotl(bytearray(SIG_DATA_DESCRIPTOR)); skip_first::Bool = false)
-    return SentinelReadCodec(sentinel, Vector{UInt8}(undef, 2^15), skip_first)
-end
-
-function TranscodingStreams.expectedsize(codec::SentinelReadCodec, ::TranscodingStreams.Memory)
-    return length(codec.sentinel)
-end
-
-function TranscodingStreams.startproc(::SentinelReadCodec, mode::Symbol, error::TranscodingStreams.Error)
-    if mode != :read
-        error[] = ErrorException("codec is read-only")
-        return :error
-    end
-    return :ok
 end
 
 """
@@ -108,35 +77,40 @@ function _findfirst_sentinel_head(sentinel::AbstractVector{UInt8}, buffer::Abstr
 end
 
 
-function TranscodingStreams.process(codec::SentinelReadCodec, input::TranscodingStreams.Memory, output::TranscodingStreams.Memory, ::TranscodingStreams.Error)
-    n = min(length(input), length(output), length(codec.buffer))
-    if n <= 0
-        return (0,0,:end)
+function bytes_remaining(limiter::SentinelLimiter, in::TranscodingStreams.Memory, stats::StatBlock)
+    buffer = unsafe_wrap(Vector{UInt8}, in.ptr, length(in); own=false)
+    (pos, found) = _findfirst_sentinel_head(limiter.sentinel, buffer)
+    if !found
+        return length(in)
     end
-    ptr = pointer(codec.buffer)
-    unsafe_copyto!(ptr, input.ptr, n)
-    spos, found = _findfirst_sentinel_head(codec.sentinel, @view codec.buffer[1:n])
-    status = :ok
-    if found
-        if codec.skip_first
-            # do not skip back one: read the first sentinel byte to make sure it is not found on the next read
-            codec.skip_first = false
-        else
-            # skip back one to preserve the sentinel in total
-            spos -= 1
-        end
+    if pos > 1
+        return pos-1
     end
-    unsafe_copyto!(output.ptr, ptr, spos)
-    return (spos,spos,status)
+    # check to see if the descriptor matches the stats block
+    slen = length(limiter.sentinel)
+    if length(in) < slen + 20 # 4 CRC bytes, 16 size bytes
+        return -1 # the input was too short to make a determination, so ask for more data
+    end
+    if bytesle2int(UInt32, buffer[slen+1:slen+4]) != stats.crc32_out
+        return 1 # the sentinel was fake, so we can consume 1 byte and move on
+    end
+    if bytesle2int(UInt64, buffer[slen+5:slen+12]) != stats.bytes_out
+        return 1
+    end
+    if bytesle2int(UInt64, buffer[slen+13:slen+20]) != stats.bytes_in
+        return 1
+    end
+    return 0 # it's a good one!
 end
 
-mutable struct CRC32ReadCodec <: TranscodingStreams.Codec
-    crc::UInt32
-    
-    CRC32ReadCodec(initial_crc::UInt32 = CRC32_INIT) = new(initial_crc)
+mutable struct ZipStatCodec{L<:AbstractLimiter,C<:TranscodingStreams.Codec} <: TranscodingStreams.Codec
+    stats::StatBlock
+    limiter::L
+    codec::C
 end
+ZipStatCodec(limiter, codec) = ZipStatCodec(StatBlock(0,0,CRC32_INIT), limiter, codec)
 
-function TranscodingStreams.startproc(::CRC32ReadCodec, mode::Symbol, error::TranscodingStreams.Error)
+function TranscodingStreams.startproc(::ZipStatCodec, mode::Symbol, error::TranscodingStreams.Error)
     if mode != :read
         error[] = ErrorException("codec is read-only")
         return :error
@@ -144,12 +118,36 @@ function TranscodingStreams.startproc(::CRC32ReadCodec, mode::Symbol, error::Tra
     return :ok
 end
 
-function TranscodingStreams.process(codec::CRC32ReadCodec, input::TranscodingStreams.Memory, output::TranscodingStreams.Memory, ::TranscodingStreams.Error)
-    n = min(length(input), length(output))
-    if n <= 0
+function TranscodingStreams.process(codec::ZipStatCodec, input::TranscodingStreams.Memory, output::TranscodingStreams.Memory, error::TranscodingStreams.Error)
+    n = bytes_remaining(codec.limiter, input, codec.stats)
+    
+    if n < 0
+        # more data requested
+        return (0,0,:ok)
+    end
+
+    if min(length(input), n) == 0
         return (0,0,:end)
     end
-    unsafe_copyto!(output.ptr, input.ptr, n)
-    codec.crc = crc32(output.ptr, n, codec.crc)
-    return (n,n,:ok)
+
+    # limit to number of bytes remaining
+    new_input = TranscodingStreams.Memory(input.ptr, n)
+    (i, o, status) = process(codec.codec, new_input, output, error)
+    if status != :error
+        codec.stats = StatBlock(
+            codec.stats.bytes_in + i,
+            codec.stats.bytes_out + o,
+            crc32(output.ptr, o, codec.stats.crc32_out)
+        )
+    end
+
+    return i, o, status
+end
+
+# needed to allow processing of Noop like a regular codec
+function TranscodingStreams.process(::Noop, input::TranscodingStreams.Memory, ::TranscodingStreams.Memory, ::TranscodingStreams.Error)
+    n = length(input)
+    status = n == 0 ? :end : :ok
+    @info "noop processing" n status
+    return n, n, status
 end
