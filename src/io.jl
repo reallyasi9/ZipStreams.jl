@@ -31,7 +31,7 @@ bytearray(i::T) where {T} = reinterpret(UInt8, [i])
 
 Reinterpret an array of little-endian bytes `a` as an integer of type T.
 """
-bytesle2int(a::AbstractArray{UInt8}, ::Type{T}) where {T<:Integer} =
+bytesle2int(::Type{T}, a::AbstractArray{UInt8}) where {T<:Integer} =
     first(reinterpret(T, ltoh(a)))
 
 """

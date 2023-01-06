@@ -12,9 +12,10 @@ A `ZipFileSource` implements `read(zf, UInt8)`, allowing all other basic read
 opperations to treat the object as if it were a file. Information about the
 archived file is stored in the `info` property.
 """
-mutable struct ZipFileSource{S<:IO} <: IO
+mutable struct ZipFileSource{C<:TranscodingStreams.Codec} <: IO
     info::ZipFileInformation
-    source::S
+    raw_source::NoopStream
+    source::TranscodingStream{C}
 
     _crc32::UInt32
 end
@@ -33,21 +34,24 @@ function Base.show(io::IO, zf::ZipFileSource)
     return
 end
 
-function zipfilesource(info::ZipFileInformation, io::IO)
+function zipfilesource(info::ZipFileInformation, io::NoopStream)
     if info.descriptor_follows
-        if info.compressed_size == 0
-            error("files using data descriptors cannot be streamed")
-        else
-            @warn "Data descriptor found in local file header, but size information present: extracted data may be corrupt" info.compressed_size
+        if info.compressed_size != 0
+            @warn "Data descriptor signalled in local file header, but size information present as well: data descriptor will be used, but extracted data may be corrupt" info.compressed_size
         end
+        truncation_codec = SentinelReadCodec(htol(bitarray(SIG_DATA_DESCRIPTOR)))
+    else
+        truncation_codec = FixedSizeReadCodec(info.compressed_size)
     end
-    truncstream = TruncatedInputStream(io, info.compressed_size)
-    C = info.compression_method == COMPRESSION_DEFLATE ? CodecZlib.DeflateDecompressor : TranscodingStreams.Noop
-    stream = TranscodingStream(C(), truncstream)
-    return ZipFileSource(info, stream, CRC32_INIT)
+    # keep the input stream open after reaching the end just in case
+    stream = TranscodingStream(truncation_codec, io; stop_on_end=true)
+    if info.compression_method == COMPRESSION_DEFLATE
+        stream = TranscodingStream(CodecZlib.DeflateCompressor(), stream; stop_on_end=true)
+    end
+    return ZipFileSource(info, io, stream, CRC32_INIT)
 end
 
-function zipfilesource(f::F, info::ZipFileInformation, io::IO) where {F <: Function}
+function zipfilesource(f::F, info::ZipFileInformation, io::NoopStream) where {F <: Function}
     zs = zipfilesource(info, io)
     return f(zs)
 end
@@ -103,7 +107,37 @@ function Base.unsafe_read(zf::ZipFileSource, p::Ptr{UInt8}, nb::UInt64)
     return nothing
 end
 
-Base.eof(zf::ZipFileSource) = eof(zf.source)
+# determine EOF based on the input stream type
+_is_true_eof(zf::ZipFileSource) = eof(zf.source)
+
+function _is_true_eof(zf::ZipFileSource{SentinelReadCodec})
+    if !eof(zf.source)
+        return false
+    end
+    data = read(zf.raw_source, 24) # the sentinel is not consumed by the SentinelReadCodec
+    # not enough data left: this can't be good...
+    if length(data) < 24
+        error("premature end of file detected when looking for Data Descriptor sentinel: data are likely corrupt")
+    end
+    sentinel_check = bytesle2int(UInt32, data[1:4]) == SIG_DATA_DESCRIPTOR
+    crc_check = bytesle2int(UInt32, data[5:8]) == zf._crc32
+    csize_check = bytesle2int(UInt64, data[9:16]) == bytes_read(zf)
+    usize_check = bytesle2int(UInt64, data[17:24]) == uncompressed_bytes_read(zf)
+    if !(sentinel_check && crc_check && csize_check && usize_check)
+        # recreate the sentinel read codec and move on
+        TranscodingStreams.unread(zf.raw_source, data)
+        codec = SentinelReadCodec(htol(bitarray(SIG_DATA_DESCRIPTOR)); skip_first=true)
+        stream = TranscodingStream(codec, zf.raw_source; stop_on_end=true)
+        if zf.info.compression_method == COMPRESSION_DEFLATE
+            stream = TranscodingStream(CodecZlib.DeflateCompressor(), stream; stop_on_end=true)
+        end
+        zf.source = stream
+        return false
+    end
+    return true
+end
+
+Base.eof(zf::ZipFileSource) = _is_true_eof(zf)
 function Base.seek(::ZipFileSource, ::Integer)
     error("stream cannot seek")
 end
@@ -166,8 +200,8 @@ struct as the file is read from the archive.
 
 Create `ZipArchiveSource` objects using the [`zipsource`](@ref) function.
 """
-mutable struct ZipArchiveSource{S<:IO} <: IO
-    source::S
+mutable struct ZipArchiveSource <: IO
+    source::NoopStream
     directory::Vector{ZipFileInformation}
     offsets::Vector{UInt64}
 
@@ -364,7 +398,7 @@ function Base.iterate(zs::ZipArchiveSource, state::Int=0)
         return iterate(zs, state)
     end
 
-    zf = zipfilesource(header.info, zs)
+    zf = zipfilesource(header.info, zs.source)
     return (zf, state+1)
 end
 

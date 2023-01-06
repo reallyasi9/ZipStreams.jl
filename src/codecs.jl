@@ -2,6 +2,13 @@ import TranscodingStreams: expectedsize, startproc, process
 
 using TranscodingStreams
 
+"""
+    FixedSizeReadCodec
+
+A codec that reads a certain number of bytes, then teminates.
+
+Useful for reading ZIP files that tell you in the header how many bytes to read.
+"""
 mutable struct FixedSizeReadCodec <: TranscodingStreams.Codec
     bytes_remaining::Int
 end
@@ -20,28 +27,43 @@ end
 
 function TranscodingStreams.process(codec::FixedSizeReadCodec, input::TranscodingStreams.Memory, output::TranscodingStreams.Memory, ::TranscodingStreams.Error)
     n = min(length(input), length(output), codec.bytes_remaining)
+    @debug "reading" n codec.bytes_remaining length(input) length(output)
     if n <= 0
+        @debug "returning (0,0,:end)"
         return (0,0,:end)
     end
+    @debug "copying" output.ptr input.ptr n
     unsafe_copyto!(output.ptr, input.ptr, n)
     codec.bytes_remaining -= n
+    @debug "done copying" codec.bytes_remaining
+    if codec.bytes_remaining == 0
+        return (n,n,:end)
+    end
     return (n,n,:ok)
 end
 
-struct DataDescriptorCodec <: TranscodingStreams.Codec
+"""
+    SentinelReadCodec
+
+A codec that reads a file until a sentinel is found, then terminates.
+
+This is useful for reading ZIP files that use a data descriptor at the end.
+"""
+struct SentinelReadCodec <: TranscodingStreams.Codec
     sentinel::Vector{UInt8}
     buffer::Vector{UInt8}
+    skip_first::Bool
 end
 
-function DataDescriptorCodec(sentinel::Vector{UInt8} = hotl(bytearray(SIG_DATA_DESCRIPTOR)))
-    return DataDescriptorCodec(sentinel, Vector{UInt8}(undef, 2^15))
+function SentinelReadCodec(sentinel::Vector{UInt8} = hotl(bytearray(SIG_DATA_DESCRIPTOR)); skip_first::Bool = false)
+    return SentinelReadCodec(sentinel, Vector{UInt8}(undef, 2^15), skip_first)
 end
 
-function TranscodingStreams.expectedsize(codec::DataDescriptorCodec, ::TranscodingStreams.Memory)
+function TranscodingStreams.expectedsize(codec::SentinelReadCodec, ::TranscodingStreams.Memory)
     return length(codec.sentinel)
 end
 
-function TranscodingStreams.startproc(::DataDescriptorCodec, mode::Symbol, error::TranscodingStreams.Error)
+function TranscodingStreams.startproc(::SentinelReadCodec, mode::Symbol, error::TranscodingStreams.Error)
     if mode != :read
         error[] = ErrorException("codec is read-only")
         return :error
@@ -86,7 +108,7 @@ function _findfirst_sentinel_head(sentinel::AbstractVector{UInt8}, buffer::Abstr
 end
 
 
-function TranscodingStreams.process(codec::DataDescriptorCodec, input::TranscodingStreams.Memory, output::TranscodingStreams.Memory, ::TranscodingStreams.Error)
+function TranscodingStreams.process(codec::SentinelReadCodec, input::TranscodingStreams.Memory, output::TranscodingStreams.Memory, ::TranscodingStreams.Error)
     n = min(length(input), length(output), length(codec.buffer))
     if n <= 0
         return (0,0,:end)
@@ -94,14 +116,18 @@ function TranscodingStreams.process(codec::DataDescriptorCodec, input::Transcodi
     ptr = pointer(codec.buffer)
     unsafe_copyto!(ptr, input.ptr, n)
     spos, found = _findfirst_sentinel_head(codec.sentinel, @view codec.buffer[1:n])
+    status = :ok
     if found
-        spos -= 1
-        unsafe_copyto!(output.ptr, ptr, spos)
-        return (spos,spos,:end)
-    else
-        unsafe_copyto!(output.ptr, ptr, spos)
-        return (spos,spos,:ok)    
+        if codec.skip_first
+            # do not skip back one: read the first sentinel byte to make sure it is not found on the next read
+            codec.skip_first = false
+        else
+            # skip back one to preserve the sentinel in total
+            spos -= 1
+        end
     end
+    unsafe_copyto!(output.ptr, ptr, spos)
+    return (spos,spos,status)
 end
 
 mutable struct CRC32ReadCodec <: TranscodingStreams.Codec

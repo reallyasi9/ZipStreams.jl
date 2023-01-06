@@ -8,6 +8,9 @@ using ZipStreams
 
 import Base: bytesavailable, close, eof, isopen, read, seek, unsafe_read, unsafe_write
 
+using Logging
+Logging.global_logger(Logging.ConsoleLogger(Logging.Debug))
+
 struct ForwardReadOnlyIO{S <: IO} <: IO
     io::S
 end
@@ -150,29 +153,6 @@ end
             ZipStreams.crc32("Hello Julia!") ==
             0x424b94c7
     end
-end
-
-@testset "TruncatedInputStream" begin
-    s = ZipStreams.TruncatedInputStream(
-        IOBuffer("The quick brown fox jumps over the lazy dog"), 15
-    )
-    @test !eof(s)
-    @test bytesavailable(s) == 15
-
-    @test read(s, String) == "The quick brown"
-    @test eof(s)
-    @test bytesavailable(s) == 0
-    @test read(s) == UInt8[]
-
-    s = ZipStreams.TruncatedInputStream(
-        IOBuffer("The quick brown fox jumps over the lazy dog"), 100
-    )
-    @test bytesavailable(s) == 43
-
-    @test read(s, String) == "The quick brown fox jumps over the lazy dog"
-    @test eof(s)
-    @test bytesavailable(s) == 0
-    @test read(s) == UInt8[]
 end
 
 @testset "Seek backward" begin
@@ -534,20 +514,22 @@ end
     @test eof(instream)
 end
 
-@testset "DataDescriptorCodec" begin
-    example = b"Hello, qqq Julia!"
+@testset "SentinelReadCodec" begin
+    example = b"Hello, qqq Julia! qqq Goodbye, qqq Julia!"
     inbuf = IOBuffer(example)
 
     instream = NoopStream(inbuf)
 
     sentinel = collect(b"qqq ")
-    @test read(TranscodingStream(ZipStreams.DataDescriptorCodec(sentinel), instream; stop_on_end = true), String) == "Hello, "
-    @test read(TranscodingStream(ZipStreams.DataDescriptorCodec(sentinel), instream; stop_on_end = true), String) == ""
+    @test read(TranscodingStream(ZipStreams.SentinelReadCodec(sentinel), instream; stop_on_end = true), String) == "Hello, "
+    @test read(TranscodingStream(ZipStreams.SentinelReadCodec(sentinel), instream; stop_on_end = true), String) == ""
 
     @test read(instream, 4) == b"qqq "
 
-    tstream = TranscodingStream(ZipStreams.DataDescriptorCodec(sentinel), instream; stop_on_end = true)
-    @test read(tstream, String) == "Julia!"
-    @test eof(tstream)
+    @test read(TranscodingStream(ZipStreams.SentinelReadCodec(sentinel), instream; stop_on_end = true), String) == "Julia! "
+    @test read(TranscodingStream(ZipStreams.SentinelReadCodec(sentinel), instream; stop_on_end = true), String) == ""
+    @test read(TranscodingStream(ZipStreams.SentinelReadCodec(sentinel; skip_first=true), instream; stop_on_end = true), String) == "qqq Goodbye, "
+    @test read(TranscodingStream(ZipStreams.SentinelReadCodec(sentinel), instream; stop_on_end = true), String) == "Julia!"
+
     @test eof(instream)
 end
