@@ -33,28 +33,22 @@ end
 
 function zipfilesource(info::ZipFileInformation, io::NoopStream)
 
-    # determine limiter to use
-    if info.descriptor_follows
-        if info.compressed_size != 0
-            @warn "Data descriptor signalled in local file header, but size information present as well: data descriptor will be used, but extracted data may be corrupt" info.compressed_size
+    # Trust deflate to properly send the end signal through the codec when EOF is read
+    if info.compression_method == COMPRESSION_DEFLATE
+        stream = DeflateCompressorStream(io; stop_on_end=true)
+    elseif info.compression_method == COMPRESSION_STORE
+        if info.descriptor_follows
+            if info.compressed_size != 0
+                @warn "Data descriptor signalled in local file header, but size information present as well: data descriptor will be used, but extracted data may be corrupt" info.compressed_size
+            end
+            limiter = SentinelLimiter(htol(bytearray(SIG_DATA_DESCRIPTOR)))
+        else
+            limiter = FixedSizeLimiter(info.compressed_size)
         end
-        limiter = SentinelLimiter(htol(bitarray(SIG_DATA_DESCRIPTOR)))
-    else
-        limiter = FixedSizeLimiter(info.compressed_size)
-    end
-    # determine compression codec to use
-    if info.compression_method == COMPRESSION_STORE
-        compressor = Noop()
-    elseif info.compression_method == COMPRESSION_DEFLATE
-        compressor = ZlibDecompressor()
+        stream = TruncatedStream(limiter, io)
     else
         error("unsupported compression method $(info.compression_method)")
     end
-    
-    # attach the stats accumulator
-    # keep the input stream open after reaching the end to verify EOF
-    accumulator = ZipStatCodec(limiter, compressor)
-    stream = TranscodingStream(accumulator, io; stop_on_end=true)
     return ZipFileSource(info, stream)
 end
 
@@ -160,11 +154,11 @@ Base.close(zf::ZipFileSource) = close(zf.source)
 Base.readavailable(zf::ZipFileSource) = read(zf)
 
 function bytes_read(zf::ZipFileSource)
-    return zf.source.codec.stats.bytes_out
+    return TranscodingStreams.stats(zf.source).out
 end
 
 function uncompressed_bytes_read(zf::ZipFileSource)
-    return zf.source.codec.stats.bytes_in
+    return TranscodingStreams.stats(zf.source).in
 end
 
 """

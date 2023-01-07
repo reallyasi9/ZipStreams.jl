@@ -1,4 +1,4 @@
-import TranscodingStreams: expectedsize, minoutsize, initialize, finalize, startproc, process
+import Base: bytesavailable, eof, flush, unsafe_read
 
 using TranscodingStreams
 
@@ -8,7 +8,7 @@ struct StatBlock
     crc32_out::UInt32
 end
 
-# AbstractLimiter types T implement bytes_remaining(::T, in::Memory, stats::StatBlock)
+# AbstractLimiter types T implement bytes_remaining(::T, stream::TranscodingStream, stats::StatBlock)
 abstract type AbstractLimiter end
 
 """
@@ -22,8 +22,8 @@ struct FixedSizeLimiter <: AbstractLimiter
     bytes::UInt64
 end
 
-function bytes_remaining(limiter::FixedSizeLimiter, in::TranscodingStreams.Memory, stats::StatBlock)
-    return min(stats.bytes_in - limiter.bytes, length(in))
+function bytes_remaining(limiter::FixedSizeLimiter, ::TranscodingStream, stats::StatBlock)
+    return min(limiter.bytes - stats.bytes_in, 0)
 end
 
 """
@@ -50,6 +50,7 @@ of the head of `sentinel` is found starting at `pos`, return `(pos,false)`. If n
 the head of `sentinel` is found, return `(lastindex(buffer),false)`.
 """
 function _findfirst_sentinel_head(sentinel::AbstractVector{UInt8}, buffer::AbstractVector{UInt8})
+    @debug "finding first sentinel" sentinel buffer 
     found = findfirst(sentinel, buffer)
     if !isnothing(found)
         return (first(found), true)
@@ -76,12 +77,12 @@ function _findfirst_sentinel_head(sentinel::AbstractVector{UInt8}, buffer::Abstr
     return (lastindex(buffer), false)
 end
 
-
-function bytes_remaining(limiter::SentinelLimiter, in::TranscodingStreams.Memory, stats::StatBlock)
-    buffer = unsafe_wrap(Vector{UInt8}, in.ptr, length(in); own=false)
+function bytes_remaining(limiter::SentinelLimiter, stream::TranscodingStream, stats::StatBlock)
+    buffer = readavailable(stream)
     (pos, found) = _findfirst_sentinel_head(limiter.sentinel, buffer)
+    unread(stream, buffer)
     if !found
-        return length(in)
+        return length(input)
     end
     if pos > 1
         return pos-1
@@ -103,51 +104,50 @@ function bytes_remaining(limiter::SentinelLimiter, in::TranscodingStreams.Memory
     return 0 # it's a good one!
 end
 
-mutable struct ZipStatCodec{L<:AbstractLimiter,C<:TranscodingStreams.Codec} <: TranscodingStreams.Codec
+
+mutable struct TruncatedStream{L<:AbstractLimiter,S<:TranscodingStream} <: IO
     stats::StatBlock
     limiter::L
-    codec::C
+    stream::S
 end
-ZipStatCodec(limiter, codec) = ZipStatCodec(StatBlock(0,0,CRC32_INIT), limiter, codec)
+TrancatedStream(limiter, stream) = TrancatedStream(StatBlock(0,0,CRC32_INIT), limiter, stream)
 
-function TranscodingStreams.startproc(::ZipStatCodec, mode::Symbol, error::TranscodingStreams.Error)
-    if mode != :read
-        error[] = ErrorException("codec is read-only")
-        return :error
-    end
-    return :ok
-end
-
-function TranscodingStreams.process(codec::ZipStatCodec, input::TranscodingStreams.Memory, output::TranscodingStreams.Memory, error::TranscodingStreams.Error)
-    n = bytes_remaining(codec.limiter, input, codec.stats)
-    
-    if n < 0
-        # more data requested
-        return (0,0,:ok)
-    end
-
-    if min(length(input), n) == 0
-        return (0,0,:end)
-    end
-
-    # limit to number of bytes remaining
-    new_input = TranscodingStreams.Memory(input.ptr, n)
-    (i, o, status) = process(codec.codec, new_input, output, error)
-    if status != :error
-        codec.stats = StatBlock(
-            codec.stats.bytes_in + i,
-            codec.stats.bytes_out + o,
-            crc32(output.ptr, o, codec.stats.crc32_out)
-        )
-    end
-
-    return i, o, status
+function update_stats!(io::TruncatedStream, p::Ptr{UInt8}, n::Int)
+    stat = TruncatedStreams.stats(io.stream)
+    io.stats = StatBlock(
+        stat.in, stat.out, crc32(p, n, stat.crc32_out)
+    )
 end
 
-# needed to allow processing of Noop like a regular codec
-function TranscodingStreams.process(::Noop, input::TranscodingStreams.Memory, ::TranscodingStreams.Memory, ::TranscodingStreams.Error)
-    n = length(input)
-    status = n == 0 ? :end : :ok
-    @info "noop processing" n status
-    return n, n, status
+function update_stats!(io::TruncatedStream, value::UInt8)
+    stat = TruncatedStreams.stats(io.stream)
+    io.stats = StatBlock(
+        stat.in, stat.out, crc32([value], stat.crc32_out)
+    )
 end
+
+Base.bytesavailable(stream::TruncatedStream) = bytes_remaining(stream.limiter, stream.stream, stream.stats)
+
+function Base.unsafe_read(io::TruncatedStream, p::Ptr{UInt8}, n::Int)
+    unsafe_read(io.stream, p, n)
+    update_stats!(io, p, n)
+    return nothing
+end
+
+function Base.read(io::TruncatedStream, ::Type{UInt8})
+    out = read(io.stream, UInt8)
+    update_stats!(io, out)
+    return out
+end
+
+Base.flush(io::TruncatedStream) = flush(io.stream)
+Base.eof(io::TruncatedStream) = eof(io.stream) || bytesavailable(io) == 0
+function Base.skip(io::TruncatedStream, offset::Integer)
+    read(io.stream, offset)
+    return
+end
+Base.position(io::TruncatedStream) = io.stats.bytes_in
+Base.seek(::TruncatedStream) = error("TruncatedStream cannot seek")
+Base.isreadable(io::TruncatedStream) = isreadable(io.stream)
+Base.iswritable(::TruncatedStream) = false
+Base.close(io::TruncatedStream) = close(io.stream)
