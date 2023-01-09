@@ -13,6 +13,17 @@ StatBlock() = StatBlock(CRC32_INIT, 0, 0)
 abstract type AbstractLimiter end
 
 """
+    UnlimitedLimiter
+
+A limiter that passes bytes_remaining checks to the underlying stream
+"""
+struct UnlimitedLimiter <: AbstractLimiter end
+
+function bytes_remaining(::UnlimitedLimiter, stream::TranscodingStream, ::StatBlock)
+    return bytesavailable(stream)
+end
+
+"""
     FixedSizeLimiter
 
 A limiter that counts the number of bytes availabe to read.
@@ -47,6 +58,8 @@ struct SentinelLimiter <: AbstractLimiter
 end
 
 function SentinelLimiter(sentinel::AbstractVector{UInt8})
+    # Implements Knuth-Morris-Pratt failure function computation
+    # https://en.wikipedia.org/wiki/Knuth%E2%80%93Morris%E2%80%93Pratt_algorithm
     s = copy(sentinel)
     t = ones(Int, length(s) + 1)
     pos = firstindex(s) + 1

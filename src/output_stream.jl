@@ -2,6 +2,7 @@ import Base: open, close, mkdir, mkpath, write, unsafe_write, flush, isopen, isw
 
 using Dates
 using TranscodingStreams
+using CodecZlib
 
 # to allow circular references
 abstract type AbstractZipFileSink <: IO end

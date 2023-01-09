@@ -35,7 +35,8 @@ function zipfilesource(info::ZipFileInformation, io::NoopStream)
 
     # Trust deflate to properly send the end signal through the codec when EOF is read
     if info.compression_method == COMPRESSION_DEFLATE
-        stream = DeflateCompressorStream(io; stop_on_end=true)
+        limiter = UnlimitedLimiter()
+        stream = TruncatedStream(limiter, DeflateCompressorStream(io; stop_on_end=true))
     elseif info.compression_method == COMPRESSION_STORE
         if info.descriptor_follows
             if info.compressed_size != 0
