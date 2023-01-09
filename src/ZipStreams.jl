@@ -26,7 +26,7 @@ export info, next_file, unzip_file, unzip_files, validate, write_file, zipsink, 
 include("crc32.jl")
 include("io.jl")
 include("constants.jl")
-include("codecs.jl")
+include("truncated_stream.jl")
 include("headers.jl")
 include("input_stream.jl")
 include("output_stream.jl")

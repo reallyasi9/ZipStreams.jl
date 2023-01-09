@@ -12,9 +12,9 @@ A `ZipFileSource` implements `read(zf, UInt8)`, allowing all other basic read
 opperations to treat the object as if it were a file. Information about the
 archived file is stored in the `info` property.
 """
-mutable struct ZipFileSource{S<:TranscodingStream} <: IO
+mutable struct ZipFileSource{L<:AbstractLimiter, S<:TranscodingStream} <: IO
     info::ZipFileInformation
-    source::S
+    source::TruncatedStream{L,S}
 end
 
 function Base.show(io::IO, zf::ZipFileSource)
@@ -76,7 +76,7 @@ function validate(zf::ZipFileSource)
     data = read(zf)
     badcom = bytes_read(zf) != zf.info.compressed_size
     badunc = uncompressed_bytes_read(zf) != zf.info.uncompressed_size
-    badcrc = zf.stream.codec.crc32_out != zf.info.crc32
+    badcrc = zf.source.stats.crc32_out != zf.info.crc32
 
     if badcom
         @error "Compressed size check failed: expected $(zf.info.compressed_size), got $(bytes_read(zf))"
@@ -85,7 +85,7 @@ function validate(zf::ZipFileSource)
         @error "Uncompressed size check failed: expected $(zf.info.uncompressed_size), got $(uncompressed_bytes_read(zf))"
     end
     if badcrc
-        @error "CRC-32 check failed: expected $(zf.info.crc32), got $(zf.stream.codec.crc32_out)"
+        @error "CRC-32 check failed: expected $(zf.info.crc32), got $(zf.source.stats.crc32_out)"
     end
     if badcom || badunc || badcrc
         error("validation failed")
@@ -148,17 +148,15 @@ Base.isreadable(zf::ZipFileSource) = isreadable(zf.source)
 Base.iswritable(::ZipFileSource) = false
 Base.isopen(zf::ZipFileSource) = isopen(zf.source)
 Base.bytesavailable(zf::ZipFileSource) = bytesavailable(zf.source)
-# closes the source stream, but because it is opened with stop_on_end=true, the underlying
-# stream (zf.raw_source) remains open.
 Base.close(zf::ZipFileSource) = close(zf.source)
-Base.readavailable(zf::ZipFileSource) = read(zf)
+Base.readavailable(zf::ZipFileSource) = readavailable(zf.source)
 
 function bytes_read(zf::ZipFileSource)
-    return TranscodingStreams.stats(zf.source).out
+    return zf.source.stats.bytes_in
 end
 
 function uncompressed_bytes_read(zf::ZipFileSource)
-    return TranscodingStreams.stats(zf.source).in
+    return zf.source.stats.bytes_out
 end
 
 """
