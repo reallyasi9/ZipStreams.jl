@@ -4,18 +4,16 @@ authors = ["Phil Killewald <reallyasi9@users.noreply.github.com>"]
 version = "2.0.0"
 
 [deps]
-CodecZlib = "944b1d66-785c-5afd-91f1-9de20f533193"
+BufferedStreams = "e1450e63-4bb3-523b-b2a4-4ffa8c0fd77d"
 Dates = "ade2ca70-3891-5945-98fb-dc099432e06a"
+Libz = "2ec943e9-cfe8-584d-b93d-64dcb6d567b7"
 Logging = "56ddb016-857b-54e1-b83d-db4d58db5568"
 Printf = "de0858da-6303-5e67-8744-51eddeeeb8d7"
 StringEncodings = "69024149-9ee7-55f6-a4c4-859efe599b68"
-TranscodingStreams = "3bb67fe8-82b1-5028-8e26-92a6c54297fa"
 Zlib_jll = "83775a58-1f1d-513f-b197-d71354ab007a"
 
 [compat]
-CodecZlib = "0.7"
 StringEncodings = "0.3"
-TranscodingStreams = "0.9"
 julia = "1.7.0"
 
 [extras]
