@@ -104,36 +104,6 @@ function Base.unsafe_read(zf::ZipFileSource, p::Ptr{UInt8}, nb::UInt64)
     return unsafe_read(zf.source, p, nb)
 end
 
-# determine EOF based on the input stream type
-# function Base.eof(zf::ZipFileSource{FixedSizeReadCodec})
-#     state = zf.source.state
-#     return state.mode ∈ (:close, :stop)
-# end
-# function Base.eof(zf::ZipFileSource{SentinelReadCodec})
-#     if !eof(zf.source)
-#         return false
-#     end
-#     data = read(zf.raw_source, 24) # the sentinel is not consumed by the SentinelReadCodec
-#     # not enough data left: this can't be good...
-#     if length(data) < 24
-#         error("premature end of file detected when looking for Data Descriptor sentinel: data are likely corrupt")
-#     end
-#     sentinel_check = bytesle2int(UInt32, data[1:4]) == SIG_DATA_DESCRIPTOR
-#     crc_check = bytesle2int(UInt32, data[5:8]) == zf._crc32
-#     csize_check = bytesle2int(UInt64, data[9:16]) == bytes_read(zf)
-#     usize_check = bytesle2int(UInt64, data[17:24]) == uncompressed_bytes_read(zf)
-#     if !(sentinel_check && crc_check && csize_check && usize_check)
-#         # recreate the sentinel read codec and move on
-#         TranscodingStreams.unread(zf.raw_source, data)
-#         codec = SentinelReadCodec(htol(bitarray(SIG_DATA_DESCRIPTOR)); skip_first=true)
-#         accumulator = zf.source.codec
-#         accumulator.codec = codec
-#         zf.source = TranscodingStream(accumulator, zf.raw_source; stop_on_end=true)
-#         return false
-#     end
-#     return true
-# end
-
 Base.eof(zf::ZipFileSource) = eof(zf.source)
 function Base.seek(::ZipFileSource, ::Integer)
     error("stream cannot seek")
@@ -151,6 +121,7 @@ Base.isopen(zf::ZipFileSource) = isopen(zf.source)
 Base.bytesavailable(zf::ZipFileSource) = bytesavailable(zf.source)
 Base.close(zf::ZipFileSource) = close(zf.source)
 Base.readavailable(zf::ZipFileSource) = readavailable(zf.source)
+Base.position(zf::ZipFileSource) = position(zf.source)
 
 function bytes_read(zf::ZipFileSource)
     return zf.source.stats.bytes_in

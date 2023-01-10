@@ -176,6 +176,14 @@ function update_stats!(s::TruncatedStream, δpos::Int, value::UInt8)
     )
 end
 
+function update_stats!(s::TruncatedStream, δpos::Int, bytes::AbstractVector{UInt8}, nb::Integer=length(bytes))
+    s.stats = StatBlock(
+        crc32(collect(bytes), s.stats.crc32_out),
+        s.stats.bytes_out + length(bytes),
+        s.stats.bytes_in + δpos,
+    )
+end
+
 function signal_eof!(io::TruncatedStream)
     mode = io.stream.state.mode
     if mode == :stop || mode == :close
@@ -220,10 +228,23 @@ function Base.read(io::TruncatedStream, ::Type{UInt8})
     end
     # Noop stats are a bit broken because the same buffer is used for input and output
     # Rely on position before and after instead
-    pos_before = position(io.stream)
+    pos_before = position(io)
     out = read(io.stream, UInt8)
-    pos_after = position(io.stream)
+    pos_after = position(io)
     update_stats!(io, pos_after - pos_before, out)
+    return out
+end
+
+function Base.readbytes!(io::TruncatedStream, a::AbstractArray{UInt8}, nb::Integer=length(a))
+    if eof(io)
+        throw(EOFError())
+    end
+    # Noop stats are a bit broken because the same buffer is used for input and output
+    # Rely on position before and after instead
+    pos_before = position(io)
+    out = readbytes!(io.stream, a, nb)
+    pos_after = position(io)
+    update_stats!(io, pos_after - pos_before, a, out)
     return out
 end
 
@@ -233,7 +254,19 @@ function Base.skip(io::TruncatedStream, offset::Integer)
     read(io.stream, offset)
     return
 end
-Base.position(io::TruncatedStream) = position(io.stream)
+"""
+    position(stream)
+
+Return the number of bytes that have passed through the input buffer of the stream.
+
+This is needed because `position(stream)` will fail if `stream` has been stopped, as in when
+`stop_on_end=true` and the decompressor stream reads and buffers the entire file.
+"""
+function Base.position(io::TruncatedStream) 
+    # always assume :read state
+    buffer1 = io.stream.state.buffer1
+    return buffer1.transcoded - TranscodingStreams.buffersize(buffer1)
+end
 Base.seek(::TruncatedStream) = error("TruncatedStream cannot seek")
 Base.isreadable(io::TruncatedStream) = isreadable(io.stream)
 Base.iswritable(::TruncatedStream) = false
