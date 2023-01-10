@@ -1,6 +1,4 @@
-import Base: bytesavailable, eof, flush, unsafe_read
-
-using TranscodingStreams
+using BufferedStreams
 
 struct StatBlock
     crc32_out::UInt32
@@ -9,18 +7,18 @@ struct StatBlock
 end
 StatBlock() = StatBlock(CRC32_INIT, 0, 0)
 
-# AbstractLimiter types T implement bytes_remaining(::T, stream::TranscodingStream, stats::StatBlock)
+# AbstractLimiter types T implement bytes_remaining(::T, ::BufferedInputStream, ::StatBlock)::UInt64
 abstract type AbstractLimiter end
 
 """
     UnlimitedLimiter
 
-A limiter that passes bytes_remaining checks to the underlying stream
+A fake limiter that returns infinite bytes remaining.
 """
 struct UnlimitedLimiter <: AbstractLimiter end
 
-function bytes_remaining(::UnlimitedLimiter, stream::TranscodingStream, ::StatBlock)
-    return bytesavailable(stream)
+function bytes_remaining(::UnlimitedLimiter, ::BufferedInputStream, ::StatBlock)
+    return typemax(UInt64)
 end
 
 """
@@ -34,12 +32,9 @@ struct FixedSizeLimiter <: AbstractLimiter
     bytes::UInt64
 end
 
-function bytes_remaining(limiter::FixedSizeLimiter, ::TranscodingStream, stats::StatBlock)
-    # avoid overflow of UInt64
-    if stats.bytes_in >= limiter.bytes
-        return Int(0)
-    end
-    return Int(limiter.bytes - stats.bytes_in)
+function bytes_remaining(limiter::FixedSizeLimiter, ::BufferedInputStream, stats::StatBlock)
+    # avoid UInt64 underflow
+    return stats.bytes_in > limiter.bytes ? UInt64(0) : limiter.bytes - stats.bytes_in
 end
 
 """
@@ -123,10 +118,11 @@ function _findfirst_sentinel_head(sentinel::AbstractVector{UInt8}, failure_funct
     return lastindex(buffer), 0
 end
 
-function bytes_remaining(limiter::SentinelLimiter, stream::TranscodingStream, stats::StatBlock)
-    buffer = readavailable(stream)
+function bytes_remaining(limiter::SentinelLimiter, stream::BufferedInputStream, stats::StatBlock)
+    buffer = Vector{UInt8}(undef, bytesavailable(stream))
+    BufferedStreams.peekbytes!(stream, buffer)
+
     (pos, len) = _findfirst_sentinel_head(limiter.sentinel, limiter.failure_function, buffer)
-    unread(stream, buffer)
     if len == 0
         # sentinel not found, so everything is available
         return length(buffer)
@@ -153,43 +149,28 @@ function bytes_remaining(limiter::SentinelLimiter, stream::TranscodingStream, st
 end
 
 
-mutable struct TruncatedStream{L<:AbstractLimiter,S<:TranscodingStream} <: IO
+mutable struct TruncatedStream{L<:AbstractLimiter,S<:BufferedInputStream} <: IO
     stats::StatBlock
     limiter::L
     stream::S
+    eof::Bool
 end
-TruncatedStream(limiter::AbstractLimiter, stream::TranscodingStream) = TruncatedStream(StatBlock(), limiter, stream)
+TruncatedStream(limiter::AbstractLimiter, stream::BufferedInputStream) = TruncatedStream(StatBlock(), limiter, stream)
 
 function update_stats!(s::TruncatedStream, δpos::Int, p::Ptr{UInt8}, n::Int)
     s.stats = StatBlock(
-        crc32(p, n, s.stats.crc32_out),
+        unsafe_crc32(p, n, s.stats.crc32_out),
         s.stats.bytes_out + n,
         s.stats.bytes_in + δpos,
     )
 end
 
-function update_stats!(s::TruncatedStream, δpos::Int, value::UInt8)
-    s.stats = StatBlock(
-        crc32([value], s.stats.crc32_out),
-        s.stats.bytes_out + 1,
-        s.stats.bytes_in + δpos,
-    )
-end
-
-function update_stats!(s::TruncatedStream, δpos::Int, bytes::AbstractVector{UInt8}, nb::Integer=length(bytes))
+function update_stats!(s::TruncatedStream, δpos::Int, bytes::AbstractVector{UInt8})
     s.stats = StatBlock(
         crc32(collect(bytes), s.stats.crc32_out),
         s.stats.bytes_out + length(bytes),
         s.stats.bytes_in + δpos,
     )
-end
-
-function signal_eof!(io::TruncatedStream)
-    mode = io.stream.state.mode
-    if mode == :stop || mode == :close
-        return
-    end
-    TranscodingStreams.changemode!(io.stream, :stop)
 end
 
 function Base.bytesavailable(stream::TruncatedStream)
@@ -198,7 +179,7 @@ function Base.bytesavailable(stream::TruncatedStream)
     end
     n = bytes_remaining(stream.limiter, stream.stream, stream.stats)
     if n == 0
-        signal_eof!(stream)
+        stream.eof = true
         return 0
     end
     if n == -1
@@ -213,26 +194,11 @@ function Base.unsafe_read(io::TruncatedStream, p::Ptr{UInt8}, n::Int)
     if eof(io)
         throw(EOFError())
     end
-    # Noop stats are a bit broken because the same buffer is used for input and output
-    # Rely on position before and after instead
     pos_before = position(io.stream)
     unsafe_read(io.stream, p, n)
     pos_after = position(io.stream)
     update_stats!(io, pos_after - pos_before, p, n)
     return nothing
-end
-
-function Base.read(io::TruncatedStream, ::Type{UInt8})
-    if eof(io)
-        throw(EOFError())
-    end
-    # Noop stats are a bit broken because the same buffer is used for input and output
-    # Rely on position before and after instead
-    pos_before = position(io)
-    out = read(io.stream, UInt8)
-    pos_after = position(io)
-    update_stats!(io, pos_after - pos_before, out)
-    return out
 end
 
 function Base.readbytes!(io::TruncatedStream, a::AbstractArray{UInt8}, nb::Integer=length(a))
@@ -249,27 +215,13 @@ function Base.readbytes!(io::TruncatedStream, a::AbstractArray{UInt8}, nb::Integ
 end
 
 Base.flush(io::TruncatedStream) = flush(io.stream)
-Base.eof(io::TruncatedStream) = eof(io.stream) || bytes_remaining(io.limiter, io.stream, io.stats) == 0
+Base.eof(io::TruncatedStream) = io.eof || eof(io.stream)
 function Base.skip(io::TruncatedStream, offset::Integer)
-    read(io.stream, offset)
+    read(io, offset) # drop the bytes on the floor
     return
 end
-"""
-    position(stream)
-
-Return the number of bytes that have passed through the input buffer of the stream.
-
-This is needed because `position(stream)` will fail if `stream` has been stopped, as in when
-`stop_on_end=true` and the decompressor stream reads and buffers the entire file.
-"""
-function Base.position(io::TruncatedStream) 
-    # always assume :read state
-    buffer1 = io.stream.state.buffer1
-    return buffer1.transcoded - TranscodingStreams.buffersize(buffer1)
-end
+Base.position(io::TruncatedStream) = position(io.stream)
 Base.seek(::TruncatedStream) = error("TruncatedStream cannot seek")
 Base.isreadable(io::TruncatedStream) = isreadable(io.stream)
 Base.iswritable(::TruncatedStream) = false
 Base.close(io::TruncatedStream) = close(io.stream)
-
-# TODO: readbytes! ?
