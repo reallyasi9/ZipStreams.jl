@@ -1,70 +1,88 @@
-using TranscodingStreams
-
 """
-    CRC32Stream
+    CRC32Sink{<:IO}
+    CRC32Source{<:IO}
 
-An wrapper around an `IO` object that computes the CRC checksum of all data passing into
+Wrappers around an `IO` object that computes the CRC checksum of all data passing into
 or out of it.
-
-Note: The CRC-32 checksum is calculated independently for read and write operations.
 """
-mutable struct CRC32Stream <: IO
-    crc32_read::UInt32
-    crc32_write::UInt32
-    bytes_read::Int
-    bytes_written::Int
-    stream::IO
+mutable struct CRC32Sink{S<:IO} <: IO
+    crc32::UInt32
+    bytes_in::Int
+    bytes_out::Int
+    stream::S
 end
-CRC32Stream(io::IO) = CRC32Stream(CRC32_INIT, CRC32_INIT, 0, 0, io)
+CRC32Sink(io::IO) = CRC32Sink(CRC32_INIT, 0, 0, io)
+
+mutable struct CRC32Source{S<:IO} <: IO
+    crc32::UInt32
+    bytes_in::Int
+    bytes_out::Int
+    stream::S
+end
+CRC32Source(io::IO) = CRC32Source(CRC32_INIT, 0, 0, io)
 
 # optimized for CRC32.jl
-function Base.write(s::CRC32Stream, a::ByteArray)
-    s.crc32_write = crc32(a, s.crc32_write)
-    s.bytes_written += sizeof(a)
-    return write(s.stream, a)
+function Base.write(s::CRC32Sink, a::ByteArray)
+    s.crc32 = crc32(a, s.crc32)
+    s.bytes_in += sizeof(a)
+    bytes_out = write(s.stream, a)
+    s.bytes_out += bytes_out
+    return bytes_out
 end
 
 # fallbacks
-function Base.unsafe_write(s::CRC32Stream, p::Ptr{UInt8}, n::UInt)
-    s.crc32_write = unsafe_crc32(p, n, s.crc32_write)
-    s.bytes_written += n
-    return unsafe_write(s.stream, p, n)
+function Base.unsafe_write(s::CRC32Sink, p::Ptr{UInt8}, n::UInt)
+    s.crc32 = unsafe_crc32(p, n, s.crc32)
+    s.bytes_in += n
+    bytes_out = unsafe_write(s.stream, p, n)
+    s.bytes_out += bytes_out
+    return bytes_out
 end
 
-function Base.unsafe_read(s::CRC32Stream, p::Ptr{UInt8}, nb::UInt)
-    unsafe_read(s.stream, p, nb)
-    s.crc32_read = unsafe_crc32(p, nb, s.crc32_read)
-    s.bytes_read += nb
+function Base.unsafe_read(s::CRC32Source, p::Ptr{UInt8}, n::UInt)
+    p0 = position(s.stream)
+    unsafe_read(s.stream, p, n)
+    δp = position(s.stream) - p0
+    s.crc32 = unsafe_crc32(p, n, s.crc32)
+    s.bytes_in += δp
+    s.bytes_out += n
     return nothing
 end
 
-function Base.readbytes!(s::CRC32Stream, a::AbstractVector{UInt8}, nb::Integer=length(a))
+function Base.readbytes!(s::CRC32Source, a::AbstractVector{UInt8}, nb::Integer=length(a))
+    p0 = position(s.stream)
     n = readbytes!(s.stream, a, nb) % UInt64
-    s.crc32_read = @GC.preserve a unsafe_crc32(pointer(a), n, s.crc32_read)
-    s.bytes_read += n
+    δp = position(s.stream) - p0
+    s.crc32 = @GC.preserve a unsafe_crc32(pointer(a), n, s.crc32)
+    s.bytes_in += δp
+    s.bytes_out += n
     return n
 end
 
-# necessary for stopping the stream if the stream is an EndToken
-Base.write(s::CRC32Stream, t::TranscodingStreams.EndToken) = write(s.sink, t)
-
 # other IO stuff
-Base.close(s::CRC32Stream) = close(s.stream)
-Base.flush(s::CRC32Stream) = flush(s.stream)
-Base.isopen(s::CRC32Stream) = isopen(s.stream)
-Base.isreadable(s::CRC32Stream) = isreadable(s.stream)
-Base.isreadonly(s::CRC32Stream) = isreadonly(s.stream)
-Base.iswritable(s::CRC32Stream) = iswritable(s.stream)
-Base.peek(s::CRC32Stream) = peek(s.stream) # do not update CRC!
-Base.position(s::CRC32Stream) = s.bytes_read # NOTE: we keep track of this
-Base.seek(::CRC32Stream, ::Integer) = error("stream cannot seek")
-function Base.skip(s::CRC32Stream, offset::Integer)
-    read(s, offset) # drop on the floor
+for typ = (:CRC32Source, :CRC32Sink)
+    for func = (:close, :isopen, :eof, :position, :bytesavailable)
+        @eval Base.$func(s::$typ) = $func(s.stream)
+    end
+
+    @eval Base.seek(::$typ) = error("$typ cannot seek")
+
+    @eval crc32(s::$typ) = s.crc32
+    @eval bytes_in(s::$typ) = s.bytes_in
+    @eval bytes_out(s::$typ) = s.bytes_out
+end
+
+Base.flush(s::CRC32Sink) = flush(s.stream)
+
+Base.isreadable(s::CRC32Sink) = false
+Base.isreadable(s::CRC32Source) = isreadable(s.stream)
+
+Base.iswritable(s::CRC32Sink) = iswritable(s.stream)
+Base.iswritable(s::CRC32Source) = false
+
+Base.peek(s::CRC32Source) = peek(s.stream) # do not update CRC!
+
+function Base.skip(s::CRC32Source, offset::Integer)
+    read(s, offset) # drop on the floor to update CRC
     return nothing
 end
-Base.eof(s::CRC32Stream) = eof(s.stream)
-
-crc32_read(s::CRC32Stream) = s.crc32_read
-crc32_write(s::CRC32Stream) = s.crc32_write
-bytes_read(s::CRC32Stream) = s.bytes_read
-bytes_written(s::CRC32Stream) = s.bytes_written
