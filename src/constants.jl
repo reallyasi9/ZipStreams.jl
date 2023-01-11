@@ -103,7 +103,7 @@ end
 function compression_name(s::Symbol)
     return String(s)
 end
-compression_name(x::UInt16) = compression_name(compression_code(x))
+compression_name(x::UInt16) = compression_name(compression_symbol(x))
 
 const HEADER_ZIP64 = UInt16(0x0001)
 const HEADER_AV_INFO = UInt16(0x0007)
