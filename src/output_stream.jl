@@ -578,6 +578,7 @@ function write_file(
     end
     filesink = CRC32Sink(sink)
     write(filesink, data)
+    write(sink, TranscodingStreams.TOKEN_END)
     flush(filesink)
 
     # 2. write local header to parent
