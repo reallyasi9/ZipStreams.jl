@@ -1,6 +1,7 @@
-using BufferedStreams
+using TranscodingStreams
+using CodecZlib
 using Dates
-using Libz
+using Printf
 
 # to allow circular references
 abstract type AbstractZipFileSink <: IO end
@@ -110,7 +111,7 @@ function Base.close(
         @debug "File already closed"
         return
     end
-    flush(zipfile.sink)
+    flush(zipfile)
     crc = crc32(zipfile.sink)
     c_size = bytes_out(zipfile)
     uc_size = bytes_in(zipfile)
@@ -160,6 +161,9 @@ function Base.close(
     # clear the referenced open file (not atomic!)
     zipfile._raw_sink._open_file = Ref{ZipFileSink}()
 
+    # DO NOT CLOSE THE TRANSCODING STREAM!
+    # Just let the garbage collector collect it later.
+
     return
 end
 
@@ -170,6 +174,10 @@ function Base.unsafe_write(zf::ZipFileSink, p::Ptr{UInt8}, n::UInt)
     return unsafe_write(zf.sink, p, n)
 end
 
+function Base.flush(zf::ZipFileSink{CRC32Sink{S}}) where {S <: TranscodingStream}
+    write(zf.sink.stream, TranscodingStreams.TOKEN_END)
+    flush(zf.sink.stream)
+end
 Base.flush(zf::ZipFileSink) = flush(zf.sink)
 Base.isopen(zf::ZipFileSink) = !zf._closed && isopen(zf.sink)
 Base.isreadable(zf::ZipFileSink) = false
@@ -239,9 +247,8 @@ function zipsink(
     comment::AbstractString = ""
 )
     directory = CentralDirectoryHeader[]
-    outsink = BufferedOutputStream(sink)
     z = ZipArchiveSink(
-        outsink,
+        sink,
         directory,
         utf8,
         comment,
@@ -478,9 +485,9 @@ function Base.open(
 
     # 2. set up compression stream
     if ccode == COMPRESSION_STORE
-        sink = BufferedOutputStream(archive)
+        sink = NoopStream(archive)
     elseif ccode == COMPRESSION_DEFLATE
-        sink = ZlibDeflateOutputStream(archive)
+        sink = DeflateCompressorStream(archive)
     else
         # How did I end up here?
         error("undefined compression type $compression")
@@ -562,9 +569,9 @@ function write_file(
     buffer = IOBuffer()
     ccode = compression_code(compression)
     if ccode == COMPRESSION_STORE
-        sink = BufferedOutputStream(buffer)
+        sink = NoopStream(buffer)
     elseif ccode == COMPRESSION_DEFLATE
-        sink = ZlibDeflateOutputStream(buffer)
+        sink = DeflateCompressorStream(buffer)
     else
         # How did I end up here?
         error("undefined compression type $compression")

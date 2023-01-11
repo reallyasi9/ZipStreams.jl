@@ -1,4 +1,4 @@
-using BufferedStreams
+using TranscodingStreams
 
 # AbstractLimiter types T implement bytes_remaining(::T, ::CRC32Source)::UInt64
 abstract type AbstractLimiter end
@@ -71,30 +71,30 @@ function SentinelLimiter(sentinel::AbstractVector{UInt8})
 end
 
 """
-    _findfirst_sentinel_head(sentinel, buffer)
+    unsafe_findfirst_sentinel_head(sentinel, failure_function, ptr, nb)
 
-Search the bytes of `buffer` for any of the first bytes of `sentinel`.
+Search the first `nb` bytes starting at `ptr` for any of the first bytes of `sentinel`.
 
-Returns the first position in `buffer` where `sentinel` is found along with the number of
-matching bytes. If the tail of `buffer` is a partial match to `sentinel`, the position of
+Returns the first position after `ptr` where `sentinel` is found along with the number of
+matching bytes. If the tail of the data pointed to by `ptr` is a partial match to `sentinel`, the position of
 the start of the partial match will be returned along with a number of matching bytes less
 than `length(sentinel)`.
 
-If no match is found, returns `(lastindex(buffer), 0)`
+If no match is found, returns `(nb, 0)`
 """
-function _findfirst_sentinel_head(sentinel::AbstractVector{UInt8}, failure_function::AbstractVector{Int}, buffer::AbstractVector{UInt8})
+function unsafe_findfirst_sentinel_head(sentinel::AbstractVector{UInt8}, failure_function::AbstractVector{Int}, ptr::Ptr{UInt8}, nb::Int)
     @boundscheck length(failure_function) == length(sentinel) + 1 || throw(BoundsError("failure function length must be 1 greater than sentinel length: expected $(length(sentinel) + 1), got $(length(failure_function))"))
     @boundscheck checkbounds(sentinel, filter(i -> i != 0, failure_function))
     # Implements Knuth-Morris-Pratt with extra logic to deal with the tail of the buffer
     # https://en.wikipedia.org/wiki/Knuth%E2%80%93Morris%E2%80%93Pratt_algorithm
-    b_idx = firstindex(buffer)
+    b_idx = 1
     s_idx = firstindex(sentinel)
 
-    @inbounds while b_idx <= lastindex(buffer)
-        if sentinel[s_idx] == buffer[b_idx]
+    @inbounds while b_idx <= nb
+        if sentinel[s_idx] == unsafe_load(ptr, b_idx)
             b_idx += 1
             s_idx += 1
-            if s_idx == lastindex(sentinel) + 1 || b_idx == lastindex(buffer) + 1
+            if s_idx == lastindex(sentinel) + 1 || b_idx == nb + 1
                 # index found or head found
                 return b_idx - s_idx + 1, s_idx - 1
             end
@@ -107,46 +107,53 @@ function _findfirst_sentinel_head(sentinel::AbstractVector{UInt8}, failure_funct
         end
     end
 
-    return lastindex(buffer), 0
+    return nb, 0
 end
 
-function bytes_remaining(limiter::SentinelLimiter, stream::CRC32Source{S}) where {S <: BufferedInputStream}
-    buffer = Vector{UInt8}(undef, bytesavailable(stream))
-    BufferedStreams.peekbytes!(stream, buffer)
-
-    (pos, len) = _findfirst_sentinel_head(limiter.sentinel, limiter.failure_function, buffer)
-    if len == 0
-        # sentinel not found, so everything is available
-        return length(buffer)
-    end
-    if pos > 1
-        # read only up to the byte before the start of the sentinel
-        return pos-1
-    end
-    # check to see if the descriptor matches the stats block
-    slen = length(limiter.sentinel)
-    if length(buffer) < slen + 20 # 4 CRC bytes, 16 size bytes
-        return -1 # the input was too short to make a determination, so ask for more data
-    end
-    if bytesle2int(UInt32, buffer[slen+1:slen+4]) != crc32(stream)
-        return 1 # the sentinel was fake, so we can consume 1 byte and move on
-    end
-    if bytesle2int(UInt64, buffer[slen+5:slen+12]) != bytes_out(stream)
-        return 1
-    end
-    if bytesle2int(UInt64, buffer[slen+13:slen+20]) != bytes_in(stream)
-        return 1
+function bytes_remaining(limiter::SentinelLimiter, stream::CRC32Source{S}) where {S <: TranscodingStream}
+    buffer = stream.stream.state.buffer1
+    @GC.preserve buffer begin
+        ptr = TranscodingStreams.bufferptr(buffer)
+        nb = TranscodingStreams.buffersize(buffer)
+        (pos, len) = unsafe_findfirst_sentinel_head(
+            limiter.sentinel,
+            limiter.failure_function,
+            ptr,
+            nb,
+        )
+        if len == 0
+            # sentinel not found, so everything is available
+            return nb
+        end
+        if pos > 1
+            # read only up to the byte before the start of the sentinel
+            return pos-1
+        end
+        # check to see if the descriptor matches the stats block
+        slen = length(limiter.sentinel)
+        if nb < slen + 20 # 4 CRC bytes, 16 size bytes
+            return -1 # the input was too short to make a determination, so ask for more data
+        end
+        if unsafe_bytesle2int(UInt32, ptr+slen) != crc32(stream)
+            return 1 # the sentinel was fake, so we can consume 1 byte and move on
+        end
+        if unsafe_bytesle2int(UInt64, ptr+slen+4) != bytes_out(stream)
+            return 1
+        end
+        if unsafe_bytesle2int(UInt64, ptr+slen+12) != bytes_in(stream)
+            return 1
+        end
     end
     return 0 # the sentinel was found, no bytes available to read anymore 
 end
 
 
-mutable struct TruncatedSource{L<:AbstractLimiter,S<:BufferedInputStream} <: IO
+mutable struct TruncatedSource{L<:AbstractLimiter,S<:TranscodingStream} <: IO
     limiter::L
-    stream::S
+    stream::CRC32Source{S}
     _eof::Bool
 end
-TruncatedSource(limiter::AbstractLimiter, stream::BufferedInputStream) = TruncatedSource(limiter, stream, false)
+TruncatedSource(limiter::AbstractLimiter, stream::TranscodingStream) = TruncatedSource(limiter, CRC32Source(stream), false)
 
 function Base.bytesavailable(stream::TruncatedSource)
     if eof(stream)

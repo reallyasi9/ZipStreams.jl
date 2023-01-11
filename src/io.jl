@@ -33,6 +33,8 @@ Reinterpret an array of little-endian bytes `a` as an integer of type T.
 """
 bytesle2int(::Type{T}, a::AbstractArray{UInt8}) where {T<:Integer} =
     first(reinterpret(T, ltoh(a)))
+unsafe_bytesle2int(::Type{T}, ptr::Ptr{UInt8}, nb::UInt=sizeof(T)) where {T<:Integer} = 
+    bytesle2int(T, unsafe_wrap(Vector{UInt8}, ptr, nb; own=false))
 
 """
     readstring(io, [nb; encoding="IBM437"])

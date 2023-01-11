@@ -1,6 +1,5 @@
-using BufferedStreams
-using Libz
-using Printf
+using TranscodingStreams
+using CodecZlib
 
 """
     ZipFileSource
@@ -41,9 +40,9 @@ function zipfilesource(info::ZipFileInformation, io::IO)
     end
 
     if info.compression_method == COMPRESSION_DEFLATE
-        source = ZlibInflateInputStream(io)
+        source = DeflateDecompressorStream(io; stop_on_end=true)
     elseif info.compression_method == COMPRESSION_STORE
-        source = BufferedInputStream(io)
+        source = NoopStream(io)
     else
         error("unsupported compression method $(info.compression_method)")
     end
