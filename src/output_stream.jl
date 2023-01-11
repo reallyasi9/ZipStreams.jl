@@ -1,4 +1,6 @@
+using BufferedStreams
 using Dates
+using Libz
 
 # to allow circular references
 abstract type AbstractZipFileSink <: IO end
@@ -15,8 +17,8 @@ Zip archive so that a proper Central Directory can be written at the end.
 Users should not call the `ZipArchiveSink` constructor: instead, use the
 [`zipsink`](@ref) method to create a new streaming archive.
 """
-mutable struct ZipArchiveSink{S<:AbstractZipFileSink} <: IO
-    sink::TranscodingStream
+mutable struct ZipArchiveSink{S<:AbstractZipFileSink,R<:IO} <: IO
+    sink::R
     directory::Vector{CentralDirectoryHeader}
 
     utf8::Bool
@@ -60,7 +62,7 @@ automatically close the previous file before opening the new file.
 You should not call the struct constructor directly: instead, use
 `open(archive, filename)`.
 """
-mutable struct ZipFileSink{S<:CRC32Stream,R<:ZipArchiveSink} <: AbstractZipFileSink
+mutable struct ZipFileSink{S<:CRC32Sink,R<:ZipArchiveSink} <: AbstractZipFileSink
     sink::S
     info::ZipFileInformation
     comment::String
@@ -77,11 +79,11 @@ function Base.show(io::IO, zf::ZipFileSink)
     info = zf.info
     fname = info.name
     compression = compression_string(info.compression_method)
-    csize = bytes_written(zf)
+    csize = bytes_out(zf)
     if info.compression_method == compression_code(:store)
         size_string = human_readable_bytes(csize)
     else
-        usize = uncompressed_bytes_written(zf)
+        usize = bytes_in(zf)
         size_string = @sprintf("%s, %s compressed (%0.2f%%)", human_readable_bytes(usize), human_readable_bytes(csize), csize/usize)
     end
     eof_string = isopen(zf) ? "" : ", closed"
@@ -109,16 +111,16 @@ function Base.close(
         return
     end
     flush(zipfile.sink)
-    crc = crc32_write(zipfile.sink)
-    c_size = bytes_written(zipfile)
-    uc_size = uncompressed_bytes_written(zipfile)
+    crc = crc32(zipfile.sink)
+    c_size = bytes_out(zipfile)
+    uc_size = bytes_in(zipfile)
     # FIXME: Not atomic!
     # NOTE: not standard per se, but more common than not to use a signature here.
     if zipfile.info.descriptor_follows
         writele(zipfile._raw_sink, SIG_DATA_DESCRIPTOR)
         writele(zipfile._raw_sink, crc)
         # Force Zip64 no matter the actual sizes
-        writele(zipfile._raw_sink, compressed_size)
+        writele(zipfile._raw_sink, c_size)
         writele(zipfile._raw_sink, uc_size)
     else
         if crc != zipfile.info.crc32
@@ -174,7 +176,7 @@ Base.isreadable(zf::ZipFileSink) = false
 Base.iswritable(zf::ZipFileSink) = !zf._closed && iswritable(zf.sink)
 
 """
-    bytes_written(zf::ZipFileSink) -> UInt64
+    bytes_out(zf::ZipFileSink) -> UInt64
 
 Return the number of possibly compressed bytes written to the file so far.
 
@@ -184,12 +186,12 @@ which has no well-defined starting point.
 Note: in order to get an accurate count, flush any buffered but unwritten data
 with `flush(zf)` before calling this method.
 """
-function bytes_written(zf::ZipFileSink)
-    return bytes_written(zf.sink)
+function bytes_out(zf::ZipFileSink)
+    return bytes_out(zf.sink)
 end
 
 """
-    uncompressed_bytes_written(zf::ZipFileSink) -> UInt64
+    bytes_in(zf::ZipFileSink) -> UInt64
 
 Return the number of uncompressed bytes written to the file so far.
 
@@ -199,10 +201,8 @@ which has no well-defined starting point.
 Note: in order to get an accurate count, flush any buffered but unwritten data
 with `flush(zf)` before calling this method.
 """
-function uncompressed_bytes_written(zf::ZipFileSink)
-    stat = TranscodingStreams.stats(zf.sink)
-    offset = stat.in % UInt64
-    return offset
+function bytes_in(zf::ZipFileSink)
+    return bytes_in(zf.sink)
 end
 
 """
@@ -239,7 +239,7 @@ function zipsink(
     comment::AbstractString = ""
 )
     directory = CentralDirectoryHeader[]
-    outsink = TranscodingStreams.NoopStream(sink)
+    outsink = BufferedOutputStream(sink)
     z = ZipArchiveSink(
         outsink,
         directory,
@@ -275,8 +275,7 @@ function Base.close(archive::ZipArchiveSink; close_sink::Bool=true)
         close(archive._open_file[])
     end
     # write the Central Directory headers
-    stat = TranscodingStreams.stats(archive.sink)
-    startpos = stat.transcoded_out
+    startpos = bytes_out(archive)
     write_directory(archive.sink, archive.directory; startpos=startpos, comment=archive.comment, utf8=archive.utf8)
     # sync writes
     flush(archive)
@@ -347,8 +346,8 @@ function Base.mkdir(ziparchive::ZipArchiveSink, path::AbstractString; comment::A
         false,
     )
     # get the offset before writing anything
-    stat = TranscodingStreams.stats(ziparchive.sink)
-    offset = stat.transcoded_out % UInt64
+    flush(ziparchive)
+    offset = bytes_out(ziparchive) % UInt64
     local_file_header = LocalFileHeader(info)
     nb = write(ziparchive, local_file_header)
     central_directory_header = CentralDirectoryHeader(info, offset, comment, true)
@@ -391,10 +390,6 @@ function Base.mkpath(ziparchive::ZipArchiveSink, path::AbstractString; comment::
         p *= ZIP_PATH_DELIMITER * element
     end
     return nb + mkdir(ziparchive, p; comment=comment)
-end
-
-function Base.write(za::ZipArchiveSink, value::UInt8)
-    return write(za.sink, value)
 end
 
 function Base.unsafe_write(za::ZipArchiveSink, x::Ptr{UInt8}, n::UInt)
@@ -464,7 +459,7 @@ function Base.open(
     ccode = compression_code(compression)
     # get the offset before the local header is written
     flush(archive)
-    offset = bytes_written(archive)
+    offset = bytes_out(archive) % UInt64
     use_descriptor = true
     zip64 = true # always use Zip64 if size is unknown
     info = ZipFileInformation(
@@ -483,14 +478,14 @@ function Base.open(
 
     # 2. set up compression stream
     if ccode == COMPRESSION_STORE
-        codec = Noop()
+        sink = BufferedOutputStream(archive)
     elseif ccode == COMPRESSION_DEFLATE
-        codec = DeflateCompressor()
+        sink = ZlibDeflateOutputStream(archive)
     else
         # How did I end up here?
         error("undefined compression type $compression")
     end
-    filesink = TranscodingStream(codec, archive)
+    filesink = CRC32Sink(sink)
 
     # 3. create file object
     zipfile = ZipFileSink(
@@ -567,28 +562,25 @@ function write_file(
     buffer = IOBuffer()
     ccode = compression_code(compression)
     if ccode == COMPRESSION_STORE
-        codec = Noop()
+        sink = BufferedOutputStream(buffer)
     elseif ccode == COMPRESSION_DEFLATE
-        codec = DeflateCompressor()
+        sink = ZlibDeflateOutputStream(buffer)
     else
         # How did I end up here?
         error("undefined compression type $compression")
     end
-    filesink = TranscodingStream(codec, buffer)
-    csink = CRC32Sink(CRC32_INIT, filesink)
-    write(csink, data)
-    write(csink, TranscodingStreams.TOKEN_END)
-    flush(csink)
+    filesink = CRC32Sink(sink)
+    write(filesink, data)
+    flush(filesink)
 
     # 2. write local header to parent
-    crc = csink.crc32
-    stats = TranscodingStreams.stats(filesink)
-    ubytes = stats.in % UInt64
-    cbytes = stats.out % UInt64
+    crc = crc32(filesink)
+    ubytes = bytes_in(filesink) % UInt64
+    cbytes = bytes_out(filesink) % UInt64
 
     # get the offset before the local header is written
     flush(archive)
-    offset = bytes_written(archive)
+    offset = bytes_out(archive)
     use_descriptor = false
     zip64 = offset >= typemax(UInt32) || ubytes >= typemax(UInt32) || cbytes >= typemax(UInt32)
 
@@ -623,7 +615,7 @@ Base.isreadable(za::ZipArchiveSink) = false
 Base.iswritable(za::ZipArchiveSink) = iswritable(za.sink)
 
 """
-    bytes_written(za::ZipArchiveSink) -> UInt64
+    bytes_out(za::ZipArchiveSink) -> UInt64
 
 Return the number of bytes written to the archive so far.
 
@@ -633,8 +625,6 @@ which has no well-defined starting point.
 Note: in order to get an accurate count, flush any buffered but unwritten data
 with `flush(za)` before calling this method.
 """
-function bytes_written(za::ZipArchiveSink)
-    stat = TranscodingStreams.stats(za.sink)
-    offset = stat.transcoded_out % UInt64
-    return offset
+function bytes_out(za::ZipArchiveSink)
+    return position(za.sink)
 end

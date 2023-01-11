@@ -1,4 +1,3 @@
-using TranscodingStreams
 import Zlib_jll: libz
 
 # TODO: Waiting for the great CRC32.jl package to be added to the general manifest.

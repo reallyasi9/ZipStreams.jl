@@ -1,5 +1,4 @@
-using CodecZlib
-using TranscodingStreams
+using Libz
 
 struct ForwardReadOnlyIO{S <: IO} <: IO
     io::S
@@ -22,4 +21,4 @@ Base.isopen(f::ForwardWriteOnlyIO) = isopen(f.io)
 
 # All test files have the same content
 const FILE_CONTENT = "Hello, Julia!\n"
-const DEFLATED_FILE_CONTENT = transcode(DeflateCompressor, FILE_CONTENT)
+const DEFLATED_FILE_CONTENT = Libz.deflate(collect(codeunits(FILE_CONTENT)))

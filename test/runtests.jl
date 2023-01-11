@@ -1,12 +1,9 @@
-using CodecZlib
+using BufferedStreams
 using Dates
 using LazyArtifacts
 using Random
 using Test
-using TranscodingStreams
 using ZipStreams
-
-import Base: bytesavailable, close, eof, isopen, read, seek, unsafe_read, unsafe_write
 
 using Logging
 Logging.global_logger(Logging.ConsoleLogger(Logging.Debug))
@@ -112,99 +109,6 @@ const ZIP64_CE = joinpath(ARTIFACT_DIR, "single-eocd64.zip")
     @test_throws ArgumentError ZipStreams.msdos2datetime(0x0000, 0xbf7e)
 end
 
-@testset "CRC32" begin
-    @testset "Array" begin
-        @test ZipStreams.crc32(UInt8[]) == 0x00000000
-        @test ZipStreams.crc32(UInt8[0]) == 0xd202ef8d
-        @test ZipStreams.crc32(UInt8[1, 2, 3, 4]) == 0xb63cfbcd
-
-        @test ZipStreams.crc32(UInt8[5, 6, 7, 8], ZipStreams.crc32(UInt8[1, 2, 3, 4])) ==
-            ZipStreams.crc32(UInt8[1, 2, 3, 4, 5, 6, 7, 8]) ==
-            0x3fca88c5
-
-        @test ZipStreams.crc32(UInt16[0x0201, 0x0403]) ==
-            ZipStreams.crc32(UInt8[1, 2, 3, 4]) ==
-            0xb63cfbcd
-    end
-    @testset "String" begin
-        @test ZipStreams.crc32("") == 0x00000000
-        @test ZipStreams.crc32("The quick brown fox jumps over the lazy dog") == 0x414fa339
-
-        @test ZipStreams.crc32("Julia!", ZipStreams.crc32("Hello ")) ==
-            ZipStreams.crc32("Hello Julia!") ==
-            0x424b94c7
-    end
-end
-
-@testset "Seek backward" begin
-    @testset "End" begin
-        fake_data = UInt8.(rand('a':'z', 10_000))
-        signature = UInt8.(collect("FOO"))
-        fake_data[end-2:end] .= signature
-        stream = IOBuffer(fake_data)
-        seekend(stream)
-        ZipStreams.seek_backward_to(stream, signature)
-        @test position(stream) == length(fake_data)-length(signature) # streams are zero indexed
-    end
-
-    @testset "Random" begin
-        signature = UInt8.(collect("BAR"))
-        for i in 1:100
-            fake_data = UInt8.(rand('a':'z', 10_000))
-            pos = rand(1:length(fake_data)-length(signature)+1)
-            fake_data[pos:pos+length(signature)-1] .= signature
-            stream = IOBuffer(fake_data)
-            seekend(stream)
-            ZipStreams.seek_backward_to(stream, signature)
-            @test position(stream) == pos-1 # streams are zero indexed
-            @test read(stream, length(signature)) == signature
-        end
-    end
-
-    @testset "Multiple" begin
-        signature = UInt8.(collect("BAZ"))
-        fake_data = UInt8.(rand('a':'z', 10_000))
-        fake_data[1001:1003] .= signature
-        fake_data[9001:9003] .= signature
-        stream = IOBuffer(fake_data)
-        seekend(stream)
-        ZipStreams.seek_backward_to(stream, signature)
-        @test position(stream) == 9000
-        @test read(stream, length(signature)) == signature
-    end
-
-    @testset "Multiple same block" begin
-        signature = UInt8.(collect("BIN"))
-        fake_data = UInt8.(rand('a':'z', 10_000))
-        fake_data[9991:9993] .= signature
-        fake_data[9981:9983] .= signature
-        stream = IOBuffer(fake_data)
-        seekend(stream)
-        ZipStreams.seek_backward_to(stream, signature)
-        @test position(stream) == 9990
-        @test read(stream, length(signature)) == signature
-    end
-
-    @testset "Straddle 4k" begin
-        signature = UInt8.(collect("Hello, Julia!"))
-        fake_data = UInt8.(rand('a':'z', 10_000))
-        fake_data[end-4100:end-4088] .= signature
-        stream = IOBuffer(fake_data)
-        seekend(stream)
-        ZipStreams.seek_backward_to(stream, signature)
-        @test position(stream) == length(fake_data) - 4101
-        @test read(stream, length(signature)) == signature
-    end
-
-    @testset "Missing" begin
-        signature = UInt8.(collect("QUA"))
-        fake_data = UInt8.(rand('a':'z', 10_000))
-        stream = IOBuffer(fake_data)
-        seekend(stream)
-        ZipStreams.seek_backward_to(stream, signature)
-        @test eof(stream)
-    end
-end
 
 @testset "File components" begin
     @testset "LocalFileHeader" begin
@@ -348,7 +252,7 @@ end
             header = read(readme, ZipStreams.LocalFileHeader)
             @test header.info.compressed_size == sizeof(DEFLATED_FILE_CONTENT)
             @test header.info.compression_method == ZipStreams.COMPRESSION_DEFLATE
-            @test header.info.crc32 == ZipStreams.crc32(FILE_CONTENT)
+            @test header.info.crc32 == ZipStreams.crc32(codeunits(FILE_CONTENT))
             @test header.info.descriptor_follows == false
             @test header.info.name == "hello.txt"
             @test header.info.uncompressed_size == sizeof(FILE_CONTENT)
