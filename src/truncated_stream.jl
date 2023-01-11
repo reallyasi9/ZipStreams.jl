@@ -172,6 +172,13 @@ function Base.bytesavailable(stream::TruncatedSource)
     return n
 end
 
+function Base.read(io::TruncatedSource, ::Type{UInt8})
+    if eof(io)
+        throw(EOFError())
+    end
+    return read(io.stream, UInt8)
+end
+
 function Base.unsafe_read(io::TruncatedSource, p::Ptr{UInt8}, n::Int)
     if eof(io)
         throw(EOFError())
@@ -186,6 +193,10 @@ function Base.readbytes!(io::TruncatedSource, a::AbstractArray{UInt8}, nb::Integ
     end
     out = readbytes!(io.stream, a, nb)
     return out
+end
+
+function Base.readavailable(io::TruncatedSource)
+    return read(io.stream, bytesavailable(io))
 end
 
 for func in (:flush, :position, :close)
@@ -204,3 +215,5 @@ Base.seek(::TruncatedSource) = error("TruncatedStream cannot seek")
 Base.isreadable(io::TruncatedSource) = isreadable(io.stream)
 
 Base.iswritable(::TruncatedSource) = false
+
+bytes_out(io::TruncatedSource) = bytes_out(io.stream)

@@ -25,6 +25,7 @@ mutable struct ZipArchiveSink{S<:AbstractZipFileSink,R<:IO} <: IO
     utf8::Bool
     comment::String
 
+    _bytes_written::UInt64
     _folders_created::Set{String}
     _open_file::Ref{S}
     _is_closed::Bool
@@ -252,6 +253,7 @@ function zipsink(
         directory,
         utf8,
         comment,
+        UInt64(0),
         Set{String}(),
         Ref{ZipStreams.ZipFileSink}(),
         false,
@@ -400,7 +402,9 @@ function Base.mkpath(ziparchive::ZipArchiveSink, path::AbstractString; comment::
 end
 
 function Base.unsafe_write(za::ZipArchiveSink, x::Ptr{UInt8}, n::UInt)
-    return unsafe_write(za.sink, x, n)
+    bytes_out = unsafe_write(za.sink, x, n)
+    za._bytes_written += bytes_out
+    return bytes_out
 end
 
 
@@ -634,5 +638,5 @@ Note: in order to get an accurate count, flush any buffered but unwritten data
 with `flush(za)` before calling this method.
 """
 function bytes_out(za::ZipArchiveSink)
-    return position(za.sink)
+    return za._bytes_written
 end

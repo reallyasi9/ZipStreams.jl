@@ -5,9 +5,6 @@ using Random
 using Test
 using ZipStreams
 
-using Logging
-Logging.global_logger(Logging.ConsoleLogger(Logging.Debug))
-
 include("common.jl")
 include("test_crc32.jl")
 

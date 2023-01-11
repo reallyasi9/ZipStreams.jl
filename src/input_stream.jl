@@ -93,9 +93,8 @@ function validate(zf::ZipFileSource)
     return data
 end
 
-function Base.unsafe_read(zf::ZipFileSource, p::Ptr{UInt8}, nb::UInt64) 
-    return unsafe_read(zf.source, p, nb)
-end
+Base.read(zf::ZipFileSource, ::Type{UInt8}) = read(zf.source, UInt8)
+Base.unsafe_read(zf::ZipFileSource, p::Ptr{UInt8}, nb::UInt64) = unsafe_read(zf.source, p, nb)
 
 Base.eof(zf::ZipFileSource) = eof(zf.source)
 function Base.seek(::ZipFileSource, ::Integer)
@@ -112,7 +111,7 @@ Base.isreadable(zf::ZipFileSource) = isreadable(zf.source)
 Base.iswritable(::ZipFileSource) = false
 Base.isopen(zf::ZipFileSource) = isopen(zf.source)
 Base.bytesavailable(zf::ZipFileSource) = bytesavailable(zf.source)
-Base.close(zf::ZipFileSource) = close(zf.source)
+Base.close(::ZipFileSource) = nothing # Do not close the source!
 Base.readavailable(zf::ZipFileSource) = readavailable(zf.source)
 Base.position(zf::ZipFileSource) = position(zf.source)
 
@@ -164,6 +163,7 @@ mutable struct ZipArchiveSource <: IO
     directory::Vector{ZipFileInformation}
     offsets::Vector{UInt64}
 
+    _bytes_read::UInt64
     # make sure we do not iterate into the central directory
     _no_more_files::Bool
 end
@@ -210,7 +210,7 @@ the lifetime of the argument.
 
 """
 function zipsource(io::IO)
-    zs = ZipArchiveSource(io, ZipFileInformation[], UInt64[], false)
+    zs = ZipArchiveSource(io, ZipFileInformation[], UInt64[], UInt64(0), false)
     return zs
 end
 zipsource(fname::AbstractString; kwargs...) = zipsource(Base.open(fname, "r"); kwargs...)
@@ -225,11 +225,20 @@ function zipsource(f::F, x::AbstractString; kwargs...) where {F<:Function}
     return val
 end
 
-for func in (:eof, :isopen, :bytesavailable, :close, :isreadable, :position)
+for func in (:eof, :isopen, :bytesavailable, :close, :isreadable)
     @eval Base.$func(s::ZipArchiveSource) = $func(s.source)
 end
 
-Base.unsafe_read(zs::ZipArchiveSource, p::Ptr{UInt8}, nb::UInt64) = unsafe_read(zs.source, p, nb)
+function Base.read(zs::ZipArchiveSource, ::Type{UInt8}) 
+    zs._bytes_read += 1
+    return read(zs.source, UInt8)
+end
+function Base.unsafe_read(zs::ZipArchiveSource, p::Ptr{UInt8}, nb::UInt64)
+    zs._bytes_read += nb
+    unsafe_read(zs.source, p, nb)
+    return nothing
+end
+Base.position(zs::ZipArchiveSource) = zs._bytes_read
 bytes_in(zs::ZipArchiveSource) = position(zs)
 
 function Base.skip(zs::ZipArchiveSource, n::Integer)

@@ -37,6 +37,14 @@ function Base.unsafe_write(s::CRC32Sink, p::Ptr{UInt8}, n::UInt)
     return bytes_out
 end
 
+function Base.read(s::CRC32Source, ::Type{UInt8})
+    a = Vector{UInt8}(undef, 1)
+    readbytes!(s.stream, a, 1)
+    s.crc32 = @GC.preserve a unsafe_crc32(pointer(a), UInt(1), s.crc32)
+    s.bytes_seen += 1
+    return first(a)
+end
+
 function Base.unsafe_read(s::CRC32Source, p::Ptr{UInt8}, n::UInt)
     unsafe_read(s.stream, p, n)
     s.crc32 = unsafe_crc32(p, n, s.crc32)
