@@ -30,7 +30,7 @@ mutable struct ZipArchiveSink{S<:AbstractZipFileSink,R<:IO} <: IO
 end
 
 function Base.show(io::IO, za::ZipArchiveSink)
-    nbytes = bytes_written(za)
+    nbytes = bytes_out(za)
     entries = length(za.directory)
     byte_string = "byte" * (nbytes == 1 ? "" : "s")
     entries_string = "entr" * (nbytes == 1 ? "y" : "ies")
@@ -78,7 +78,7 @@ end
 function Base.show(io::IO, zf::ZipFileSink)
     info = zf.info
     fname = info.name
-    compression = compression_string(info.compression_method)
+    compression = compression_name(info.compression_method)
     csize = bytes_out(zf)
     if info.compression_method == compression_code(:store)
         size_string = human_readable_bytes(csize)

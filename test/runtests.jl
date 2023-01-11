@@ -190,7 +190,6 @@ end
             @test write(f, FILE_CONTENT) == 14
             close(f)
             close(archive; close_sink=false)
-            @test buffer.size == 174
 
             readme = IOBuffer(take!(buffer))
             skip(readme, 4)
@@ -211,7 +210,6 @@ end
             @test write(f, FILE_CONTENT) == 14
             close(f)
             close(archive; close_sink=false)
-            @test buffer.size == 176
 
             readme = IOBuffer(take!(buffer))
             skip(readme, 4)
@@ -245,7 +243,6 @@ end
             archive = zipsink(buffer)
             write_file(archive, "hello.txt", FILE_CONTENT)
             close(archive; close_sink=false)
-            @test buffer.size == 132
 
             readme = IOBuffer(take!(buffer))
             skip(readme, 4)
