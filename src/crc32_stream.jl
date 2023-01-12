@@ -82,8 +82,8 @@ for typ = (:CRC32Source, :CRC32Sink)
 
     @eval crc32(s::$typ) = s.crc32
     @eval bytes_seen(s::$typ) = s.bytes_seen
-    @eval bytes_in(s::$typ) = stats(s).in
-    @eval bytes_out(s::$typ) = stats(s).out
+    @eval bytes_in(s::$typ) = stats(s).transcoded_out # note: reversed from codec's meaning
+    @eval bytes_out(s::$typ) = stats(s).transcoded_in # note: reversed from codec's meaning
 end
 
 Base.flush(s::CRC32Sink) = flush(s.stream)

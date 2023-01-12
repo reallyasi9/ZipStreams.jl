@@ -40,7 +40,7 @@ function zipfilesource(info::ZipFileInformation, io::IO)
     end
 
     if info.compression_method == COMPRESSION_DEFLATE
-        source = DeflateDecompressorStream(io; stop_on_end=true)
+        source = DeflateDecompressorStream(io; stop_on_end=false) # the truncator will handle stopping at the right time
     elseif info.compression_method == COMPRESSION_STORE
         source = NoopStream(io)
     else
@@ -113,6 +113,7 @@ Base.isopen(zf::ZipFileSource) = isopen(zf.source)
 Base.bytesavailable(zf::ZipFileSource) = bytesavailable(zf.source)
 Base.close(::ZipFileSource) = nothing # Do not close the source!
 Base.readavailable(zf::ZipFileSource) = readavailable(zf.source)
+Base.readbytes!(zf::ZipFileSource, a::AbstractVector{UInt8}, nb=length(a)) = readbytes!(zf.source, a, nb)
 Base.position(zf::ZipFileSource) = position(zf.source)
 
 function bytes_in(zf::ZipFileSource)

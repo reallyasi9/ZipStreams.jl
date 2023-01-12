@@ -176,7 +176,11 @@ function Base.read(io::TruncatedSource, ::Type{UInt8})
     if eof(io)
         throw(EOFError())
     end
-    return read(io.stream, UInt8)
+    b = read(io.stream, UInt8)
+    if eof(io)
+        io._eof = true
+    end
+    return b
 end
 
 function Base.unsafe_read(io::TruncatedSource, p::Ptr{UInt8}, n::Int)
@@ -184,6 +188,9 @@ function Base.unsafe_read(io::TruncatedSource, p::Ptr{UInt8}, n::Int)
         throw(EOFError())
     end
     unsafe_read(io.stream, p, n)
+    if eof(io)
+        io._eof = true
+    end
     return nothing
 end
 
@@ -191,8 +198,16 @@ function Base.readbytes!(io::TruncatedSource, a::AbstractArray{UInt8}, nb::Integ
     if eof(io)
         throw(EOFError())
     end
-    out = readbytes!(io.stream, a, nb)
-    return out
+    n = 0
+    while n < nb && !eof(io)
+        na = min(bytesavailable(io), nb - n)
+        if length(a) < n + na
+            resize!(a, min(length(a) * 2, nb))
+        end
+        @GC.preserve a unsafe_read(io.stream, pointer(a, n+1), na)
+        n += na
+    end
+    return n
 end
 
 function Base.readavailable(io::TruncatedSource)
@@ -216,4 +231,5 @@ Base.isreadable(io::TruncatedSource) = isreadable(io.stream)
 
 Base.iswritable(::TruncatedSource) = false
 
+bytes_in(io::TruncatedSource) = bytes_in(io.stream)
 bytes_out(io::TruncatedSource) = bytes_out(io.stream)
