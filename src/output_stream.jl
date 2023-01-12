@@ -570,25 +570,20 @@ function write_file(
     end
 
     # 1. write the raw data to a buffer
-    buffer = IOBuffer()
     ccode = compression_code(compression)
     if ccode == COMPRESSION_STORE
-        sink = NoopStream(buffer)
+        cdata = data
     elseif ccode == COMPRESSION_DEFLATE
-        sink = DeflateCompressorStream(buffer)
+        cdata = transcode(DeflateCompressor, data)
     else
         # How did I end up here?
         error("undefined compression type $compression")
     end
-    filesink = CRC32Sink(sink)
-    write(filesink, data)
-    write(sink, TranscodingStreams.TOKEN_END)
-    flush(filesink)
 
     # 2. write local header to parent
-    crc = crc32(filesink)
-    ubytes = bytes_in(filesink) % UInt64
-    cbytes = bytes_out(filesink) % UInt64
+    crc = crc32(data)
+    ubytes = sizeof(data) % UInt64
+    cbytes = sizeof(cdata) % UInt64
 
     # get the offset before the local header is written
     flush(archive)
@@ -611,7 +606,7 @@ function write_file(
     write(archive, local_file_header)
 
     # 3. write the data
-    n_written = write(archive, take!(buffer))
+    n_written = write(archive, cdata)
 
     # 4. Add the entry to the directory
     is_dir = false

@@ -7,6 +7,8 @@ using ZipStreams
 
 include("common.jl")
 include("test_crc32.jl")
+include("test_limiters.jl")
+include("test_truncated_source.jl")
 
 function file_info(; name::AbstractString="hello.txt", descriptor::Bool=false, utf8::Bool=false, zip64::Bool=false, datetime::DateTime=DateTime(2022, 8, 18, 23, 21, 38), compression::UInt16=ZipStreams.COMPRESSION_STORE)
     uc_size = 13 % UInt64

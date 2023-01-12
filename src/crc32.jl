@@ -40,6 +40,10 @@ const ByteArray = Union{Array{UInt8},
 # for easier calculations if we have direct access to the pointers and the length
 unsafe_crc32(data::Ptr{UInt8}, n::Csize_t, crc::UInt32=CRC32_INIT) = ccall((:crc32, libz), Culong, (Culong, Ptr{Cchar}, Csize_t), crc, data, n) % UInt32
 crc32(data::ByteArray, crc::UInt32=CRC32_INIT) = @GC.preserve data ccall((:crc32, libz), Culong, (Culong, Ptr{Cchar}, Csize_t), crc, pointer(data), length(data) % Csize_t) % UInt32
+function crc32(data::AbstractString, crc::UInt32=CRC32_INIT) 
+    a = codeunits(data) # might allocate
+    @GC.preserve a ccall((:crc32, libz), Culong, (Culong, Ptr{Cchar}, Csize_t), crc, pointer(a), length(a) % Csize_t) % UInt32
+end
 crc32(io::IO, nb::Integer, crc::UInt32=CRC32_INIT) = _crc32(io, nb, crc)
 crc32(io::IO, crc::UInt32=CRC32_INIT) = _crc32(io, crc)
 crc32(io::IOStream, crc::UInt32=CRC32_INIT) = _crc32(io, crc)
