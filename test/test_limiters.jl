@@ -57,4 +57,11 @@ const SENTINEL = UInt8[222,173,190,239]
     consume!(l, a)
     @test bytes_remaining(l, buf) == 0 # sentinel matches
     @test bytes_consumed(l) == content_len
+
+    @testset "failure function construction" begin
+        @test SentinelLimiter(b"ABCDABD").failure_function == [-1,0,0,0,-1,0,2,0] .+ 1
+        @test SentinelLimiter(b"ABACABABC").failure_function == [-1,0,-1,1,-1,0,-1,3,2,0] .+ 1
+        @test SentinelLimiter(b"ABACABABA").failure_function == [-1,0,-1,1,-1,0,-1,3,-1,3] .+ 1
+        @test SentinelLimiter(b"PARTICIPATE IN PARACHUTE").failure_function == [-1,0,0,0,0,0,0,-1,0,2,0,0,0,0,0,-1,0,0,3,0,0,0,0,0,0] .+ 1
+    end
 end

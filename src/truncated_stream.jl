@@ -217,27 +217,20 @@ function bytes_consumed(io::TruncatedSource)
     return bytes_consumed(io.limiter)
 end
 
-function Base.bytesavailable(io::TruncatedSource)
-    if io._eof
-        return 0
-    end
+function Base.bytesavailable(io::TruncatedSource) 
     n = bytes_remaining(io.limiter, io.stream)
     if n == 0
         io._eof = true
         return 0
     end
-    if n == -1
-        # unable to determine based on current buffer
-        # don't signal EOF, but don't claim to be able to read anything, either
-        return 0 
+    if n < 0
+        return 0
     end
     return min(n, bytesavailable(io.stream))
 end
 
 function Base.read(io::TruncatedSource, ::Type{UInt8})
-    br = bytes_remaining(io.limiter, io.stream)
-    if eof(io) || br == 0
-        io._eof = true
+    if eof(io)
         throw(EOFError())
     end
     b = read(io.stream, 1) # read to array
@@ -246,20 +239,13 @@ function Base.read(io::TruncatedSource, ::Type{UInt8})
 end
 
 function Base.unsafe_read(io::TruncatedSource, p::Ptr{UInt8}, n::Int)
-    br = bytesavailable(io)
-    nr = min(br, n)
-    unsafe_read(io.stream, p, nr)
-    consume!(io.limiter, unsafe_wrap(Vector{UInt8}, p, nr; own=false))
-    if nr < n
-        io._eof = true
-        throw(EOFError())
-    end
+    unsafe_read(io.stream, p, n)
+    consume!(io.limiter, unsafe_wrap(Vector{UInt8}, p, n; own=false))
     return nothing
 end
 
 function Base.readbytes!(io::TruncatedSource, a::AbstractArray{UInt8}, nb::Integer=length(a))
-    if eof(io) || bytes_remaining(io.limiter, io.stream) == 0
-        io._eof = true
+    if eof(io)
         throw(EOFError())
     end
     read_so_far = 0
@@ -280,7 +266,6 @@ end
 
 function Base.readavailable(io::TruncatedSource) 
     if eof(io)
-        io._eof = true
         return UInt8[]
     end
     n = bytesavailable(io)
@@ -289,7 +274,12 @@ function Base.readavailable(io::TruncatedSource)
     return a
 end
 
-Base.eof(io::TruncatedSource) = io._eof || eof(io.stream)
+function Base.eof(io::TruncatedSource)
+    # in order of complexity
+    io._eof = io._eof || eof(io.stream) || (bytes_remaining(io.limiter, io.stream) == 0)
+    return io._eof
+end
+
 function Base.skip(io::TruncatedSource, offset::Integer)
     read(io, offset) # drop the bytes on the floor
     return
@@ -297,3 +287,4 @@ end
 Base.seek(::TruncatedSource) = error("TruncatedSource cannot seek")
 Base.isreadable(io::TruncatedSource) = isreadable(io.stream)
 Base.iswritable(::TruncatedSource) = false
+Base.isopen(io::TruncatedSource) = isopen(io.stream)

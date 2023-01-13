@@ -108,9 +108,8 @@ import ZipStreams: TruncatedSource, UnlimitedLimiter, FixedSizeLimiter, Sentinel
             @test a == TRUNC_SENTINEL[1:1]
             a = readavailable(t)
             @test a == vcat(TRUNC_SENTINEL[2:end], TRUNC_CONTENT)
-            @test eof(t) == false # because the stream does not know if it is eof until it tries to read again
-            @test readavailable(t) == UInt8[]
             @test eof(t) == true
+            @test readavailable(t) == UInt8[]
         end
 
         @testset "read" begin
