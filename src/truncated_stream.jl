@@ -1,5 +1,3 @@
-using TranscodingStreams
-
 # AbstractLimiter types T implement bytes_remaining(::T, ::CRC32Source)::UInt64
 """
     AbstractLimiter
@@ -9,6 +7,7 @@ An abstract type that reports a number of bytes remaining to read before EOF.
 An AbstractLimiter implements the following interface:
 - `bytes_remaining(::T, ::IO)::Int`: report the number of bytes remaining to read from a given `IO` object.
 - `consume!(::T, ::AbstractVector{UInt8})`: report to the limiter that the provided array of bytes has been consumed so it can update its state.
+- `bytes_consumed(::T)::UInt64`: report the number of bytes seen by the limiter.
 """
 abstract type AbstractLimiter end
 
@@ -17,14 +16,22 @@ abstract type AbstractLimiter end
 
 A fake limiter that always reports typemax(Int) bytes remaining.
 """
-struct UnlimitedLimiter <: AbstractLimiter end
+mutable struct UnlimitedLimiter <: AbstractLimiter
+    bytes_consumed::UInt64
+    UnlimitedLimiter() = new(0)
+end
 
 function bytes_remaining(::UnlimitedLimiter, ::IO)
     return typemax(Int)
 end
 
-function consume!(::UnlimitedLimiter, ::AbstractVector{UInt8})
+function consume!(limiter::UnlimitedLimiter, a::AbstractVector{UInt8})
+    limiter.bytes_consumed += length(a)
     return nothing
+end
+
+function bytes_consumed(limiter::UnlimitedLimiter)
+    return limiter.bytes_consumed
 end
 
 """
@@ -35,7 +42,9 @@ A limiter that counts up to a fixed number of bytes to read.
 Useful for reading ZIP files that tell you in the header how many bytes to read.
 """
 mutable struct FixedSizeLimiter <: AbstractLimiter
+    byte_limit::UInt64
     bytes_remaining::Int
+    FixedSizeLimiter(n::Integer) = new(n, n)
 end
 
 function bytes_remaining(limiter::FixedSizeLimiter, ::IO)
@@ -45,6 +54,10 @@ end
 function consume!(limiter::FixedSizeLimiter, a::AbstractVector{UInt8})
     limiter.bytes_remaining = max(limiter.bytes_remaining - length(a), 0)
     return nothing
+end
+
+function bytes_consumed(limiter::FixedSizeLimiter)
+    return (limiter.byte_limit - limiter.bytes_remaining) % UInt64
 end
 
 """
@@ -188,6 +201,10 @@ function consume!(limiter::SentinelLimiter, a::AbstractVector{UInt8})
     return nothing
 end
 
+function bytes_consumed(limiter::SentinelLimiter)
+    return limiter.bytes_consumed
+end
+
 
 mutable struct TruncatedSource{L<:AbstractLimiter,S<:IO} <: IO
     limiter::L
@@ -195,6 +212,10 @@ mutable struct TruncatedSource{L<:AbstractLimiter,S<:IO} <: IO
     _eof::Bool
 end
 TruncatedSource(limiter::AbstractLimiter, stream::IO) = TruncatedSource(limiter, stream, false)
+
+function bytes_consumed(io::TruncatedSource)
+    return bytes_consumed(io.limiter)
+end
 
 function Base.bytesavailable(io::TruncatedSource)
     if io._eof

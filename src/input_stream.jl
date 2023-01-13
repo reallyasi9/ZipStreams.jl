@@ -13,14 +13,15 @@ archived file is stored in the `info` property.
 mutable struct ZipFileSource{S<:TruncatedSource} <: IO
     info::ZipFileInformation
     source::S
+    bytes_produced::UInt64
 end
 
 function Base.show(io::IO, zf::ZipFileSource)
     fname = zf.info.name
     csize = zf.info.compressed_size
     usize = zf.info.uncompressed_size
-    cread = bytes_out(zf)
-    uread = bytes_in(zf)
+    uread = bytes_out(zf)
+    cread = bytes_in(zf)
     size_string = human_readable_bytes(uread, usize)
     if zf.info.compression_method != COMPRESSION_STORE
         size_string *= " ($(human_readable_bytes(cread, csize)) compressed)"
@@ -47,7 +48,7 @@ function zipfilesource(info::ZipFileInformation, io::IO)
         error("unsupported compression method $(info.compression_method)")
     end
     stream = TruncatedSource(limiter, source)
-    return ZipFileSource(info, stream)
+    return ZipFileSource(info, stream, UInt64(0))
 end
 
 function zipfilesource(f::F, info::ZipFileInformation, io::IO) where {F <: Function}
@@ -93,35 +94,57 @@ function validate(zf::ZipFileSource)
     return data
 end
 
-Base.read(zf::ZipFileSource, ::Type{UInt8}) = read(zf.source, UInt8)
-Base.unsafe_read(zf::ZipFileSource, p::Ptr{UInt8}, nb::UInt64) = unsafe_read(zf.source, p, nb)
+function Base.read(zf::ZipFileSource, ::Type{UInt8}) 
+    x = read(zf.source, UInt8)
+    zf.bytes_produced += 1
+    return x
+end
+
+function Base.unsafe_read(zf::ZipFileSource, p::Ptr{UInt8}, nb::UInt) 
+    unsafe_read(zf.source, p, nb)
+    zf.bytes_produced += nb
+    return nothing
+end
+
+function Base.readavailable(zf::ZipFileSource) 
+    x = readavailable(zf.source)
+    zf.bytes_produced += length(x)
+    return x
+end
+
+function Base.readbytes!(zf::ZipFileSource, a::AbstractVector{UInt8}, nb=length(a))
+    n = readbytes!(zf.source, a, nb)
+    zf.bytes_produced += n
+    return n
+end
 
 Base.eof(zf::ZipFileSource) = eof(zf.source)
 function Base.seek(::ZipFileSource, ::Integer)
     error("stream cannot seek")
 end
+
 function Base.skip(zf::ZipFileSource, n::Integer)
     if n < 0
         error("stream cannot skip backward")
     end
     skip(zf.source, n)
+    zf.bytes_produced += n # consistent with not being able to seek backward
     return
 end
+
 Base.isreadable(zf::ZipFileSource) = isreadable(zf.source)
 Base.iswritable(::ZipFileSource) = false
 Base.isopen(zf::ZipFileSource) = isopen(zf.source)
 Base.bytesavailable(zf::ZipFileSource) = bytesavailable(zf.source)
 Base.close(::ZipFileSource) = nothing # Do not close the source!
-Base.readavailable(zf::ZipFileSource) = readavailable(zf.source)
-Base.readbytes!(zf::ZipFileSource, a::AbstractVector{UInt8}, nb=length(a)) = readbytes!(zf.source, a, nb)
 Base.position(zf::ZipFileSource) = position(zf.source)
 
 function bytes_in(zf::ZipFileSource)
-    return bytes_in(zf.source)
+    return bytes_consumed(zf.source)
 end
 
 function bytes_out(zf::ZipFileSource)
-    return bytes_out(zf.source)
+    return zf.bytes_produced
 end
 
 """
