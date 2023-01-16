@@ -1,7 +1,7 @@
-using TranscodingStreams
-using CodecZlib
+import Base: open, close, mkdir, mkpath, write, unsafe_write, flush, isopen, iswritable, isreadable, position
+
 using Dates
-using Printf
+using TranscodingStreams
 
 # to allow circular references
 abstract type AbstractZipFileSink <: IO end
@@ -18,21 +18,20 @@ Zip archive so that a proper Central Directory can be written at the end.
 Users should not call the `ZipArchiveSink` constructor: instead, use the
 [`zipsink`](@ref) method to create a new streaming archive.
 """
-mutable struct ZipArchiveSink{S<:AbstractZipFileSink,R<:IO} <: IO
-    sink::R
+mutable struct ZipArchiveSink{S<:AbstractZipFileSink} <: IO
+    sink::TranscodingStream
     directory::Vector{CentralDirectoryHeader}
 
     utf8::Bool
     comment::String
 
-    _bytes_written::UInt64
     _folders_created::Set{String}
     _open_file::Ref{S}
     _is_closed::Bool
 end
 
 function Base.show(io::IO, za::ZipArchiveSink)
-    nbytes = bytes_out(za)
+    nbytes = bytes_written(za)
     entries = length(za.directory)
     byte_string = "byte" * (nbytes == 1 ? "" : "s")
     entries_string = "entr" * (nbytes == 1 ? "y" : "ies")
@@ -42,7 +41,7 @@ function Base.show(io::IO, za::ZipArchiveSink)
 end
 
 """
-    ZipFileSink{S}([arguments])
+    ZipFileSink{S,R}([arguments])
 
 A struct representing an open streamable file in a `ZipArchiveSink`.
 
@@ -51,11 +50,9 @@ methods from `IO`. You cannot read from this type, nor can you seek, skip, or
 read the file's position. It functions in this way to allow writing to write-only
 streams (like HTTP output).
 
-The type `S` represents the `BufferedStream` type associated with the
-(potentially compressed) stream that writes the file information. The raw
-`ZipArchiveSink` where this object writes associated file metadata is also referenced
-by the object, which means the `ZipArchiveSink` should never be closed before an opened
-`ZipFileSink` goes out of scope.
+The types `S` and `R` represent the `TranscodingStream` types associated with the
+(potentially compressed) stream that writes the file information and the raw
+`ZipArchiveSink` where this object writes associated file metadata.
 
 You can only have one `ZipFileSink` open per `ZipArchiveSink`.
 Attempts to open a second file in the same archive will issue a warning and
@@ -64,14 +61,14 @@ automatically close the previous file before opening the new file.
 You should not call the struct constructor directly: instead, use
 `open(archive, filename)`.
 """
-mutable struct ZipFileSink{S<:CRC32Sink,R<:ZipArchiveSink} <: AbstractZipFileSink
+mutable struct ZipFileSink{S<:TranscodingStream} <: AbstractZipFileSink
     sink::S
     info::ZipFileInformation
     comment::String
     offset::UInt64
 
     # for writing data to the parent archive on close
-    _raw_sink::R
+    _raw_sink::ZipArchiveSink
     _crc32::UInt32
     # don't close twice
     _closed::Bool
@@ -80,12 +77,12 @@ end
 function Base.show(io::IO, zf::ZipFileSink)
     info = zf.info
     fname = info.name
-    compression = compression_name(info.compression_method)
-    csize = bytes_out(zf)
+    compression = compression_string(info.compression_method)
+    csize = bytes_written(zf)
     if info.compression_method == compression_code(:store)
         size_string = human_readable_bytes(csize)
     else
-        usize = bytes_in(zf)
+        usize = uncompressed_bytes_written(zf)
         size_string = @sprintf("%s, %s compressed (%0.2f%%)", human_readable_bytes(usize), human_readable_bytes(csize), csize/usize)
     end
     eof_string = isopen(zf) ? "" : ", closed"
@@ -112,34 +109,32 @@ function Base.close(
         @debug "File already closed"
         return
     end
-    flush(zipfile)
-    crc = crc32(zipfile.sink)
-    c_size = bytes_out(zipfile)
-    uc_size = bytes_in(zipfile)
+    crc = zipfile._crc32
+    write(zipfile.sink, TranscodingStreams.TOKEN_END)
+    flush(zipfile.sink)
+    compressed_size = bytes_written(zipfile)
+    uc_size = uncompressed_bytes_written(zipfile)
     # FIXME: Not atomic!
     # NOTE: not standard per se, but more common than not to use a signature here.
     if zipfile.info.descriptor_follows
         writele(zipfile._raw_sink, SIG_DATA_DESCRIPTOR)
         writele(zipfile._raw_sink, crc)
         # Force Zip64 no matter the actual sizes
-        writele(zipfile._raw_sink, c_size)
+        writele(zipfile._raw_sink, compressed_size)
         writele(zipfile._raw_sink, uc_size)
     else
-        if crc != zipfile.info.crc32
-            error("file data written to archive does not match local header data: expected CRC-32 $(zipfile.info.crc32), got $crc")
-        elseif c_size != zipfile.info.compressed_size
-            error("file data written to archive does not match local header data: expected compressed size $(zipfile.info.compressed_size), got $c_size")
-        elseif uc_size != zipfile.info.uncompressed_size
-            error("file data written to archive does not match local header data: expected uncompressed size $(zipfile.info.uncompressed_size), got $uc_size")
+        if crc != zipfile.info.crc32 || compressed_size != zipfile.info.compressed_size || uc_size != zipfile.info.uncompressed_size
+            @error "File data written to archive does not match local header data" crc32_header=zipfile.info.crc32 crc32_file=crc csize_header=zipfile.info.compressed_size csize_file=compressed_size usize_header=zipfile.info.uncompressed_size usize_file=uc_size
+            error("file data written to archive does not match local header data")
         end
     end
 
     # Only force Zip64 in the Central Directory if necessary
-    zip64 = zipfile.offset >= typemax(UInt32) || c_size >= typemax(UInt32) || uc_size >= typemax(UInt32)
+    zip64 = zipfile.offset >= typemax(UInt32) || compressed_size >= typemax(UInt32) || uc_size >= typemax(UInt32)
     directory_info = ZipFileInformation(
         zipfile.info.compression_method,
         uc_size,
-        c_size,
+        compressed_size,
         now(),
         crc,
         zipfile.info.name,
@@ -162,30 +157,32 @@ function Base.close(
     # clear the referenced open file (not atomic!)
     zipfile._raw_sink._open_file = Ref{ZipFileSink}()
 
-    # DO NOT CLOSE THE TRANSCODING STREAM!
-    # Just let the garbage collector collect it later.
-
     return
 end
 
-function Base.unsafe_write(zf::ZipFileSink, p::Ptr{UInt8}, n::UInt)
-    if !isopen(zf)
+function Base.write(zipfile::ZipFileSink, value::UInt8)
+    if zipfile._closed
         throw(EOFError())
     end
+    zipfile._crc32 = crc32(value, zipfile._crc32)
+    return write(zipfile.sink, value)
+end
+
+function Base.unsafe_write(zf::ZipFileSink, p::Ptr{UInt8}, n::UInt)
+    if zf._closed
+        throw(EOFError())
+    end
+    zf._crc32 = crc32(p, n, zf._crc32)
     return unsafe_write(zf.sink, p, n)
 end
 
-function Base.flush(zf::ZipFileSink{CRC32Sink{S}}) where {S <: TranscodingStream}
-    write(zf.sink.stream, TranscodingStreams.TOKEN_END)
-    flush(zf.sink.stream)
-end
 Base.flush(zf::ZipFileSink) = flush(zf.sink)
 Base.isopen(zf::ZipFileSink) = !zf._closed && isopen(zf.sink)
 Base.isreadable(zf::ZipFileSink) = false
 Base.iswritable(zf::ZipFileSink) = !zf._closed && iswritable(zf.sink)
 
 """
-    bytes_out(zf::ZipFileSink) -> UInt64
+    bytes_written(zf::ZipFileSink) -> UInt64
 
 Return the number of possibly compressed bytes written to the file so far.
 
@@ -195,12 +192,14 @@ which has no well-defined starting point.
 Note: in order to get an accurate count, flush any buffered but unwritten data
 with `flush(zf)` before calling this method.
 """
-function bytes_out(zf::ZipFileSink)
-    return bytes_out(zf.sink)
+function bytes_written(zf::ZipFileSink)
+    stat = TranscodingStreams.stats(zf.sink)
+    offset = stat.out % UInt64
+    return offset
 end
 
 """
-    bytes_in(zf::ZipFileSink) -> UInt64
+    uncompressed_bytes_written(zf::ZipFileSink) -> UInt64
 
 Return the number of uncompressed bytes written to the file so far.
 
@@ -210,8 +209,10 @@ which has no well-defined starting point.
 Note: in order to get an accurate count, flush any buffered but unwritten data
 with `flush(zf)` before calling this method.
 """
-function bytes_in(zf::ZipFileSink)
-    return bytes_in(zf.sink)
+function uncompressed_bytes_written(zf::ZipFileSink)
+    stat = TranscodingStreams.stats(zf.sink)
+    offset = stat.in % UInt64
+    return offset
 end
 
 """
@@ -248,12 +249,12 @@ function zipsink(
     comment::AbstractString = ""
 )
     directory = CentralDirectoryHeader[]
+    outsink = TranscodingStreams.NoopStream(sink)
     z = ZipArchiveSink(
-        sink,
+        outsink,
         directory,
         utf8,
         comment,
-        UInt64(0),
         Set{String}(),
         Ref{ZipStreams.ZipFileSink}(),
         false,
@@ -284,7 +285,8 @@ function Base.close(archive::ZipArchiveSink; close_sink::Bool=true)
         close(archive._open_file[])
     end
     # write the Central Directory headers
-    startpos = bytes_out(archive)
+    stat = TranscodingStreams.stats(archive.sink)
+    startpos = stat.transcoded_out
     write_directory(archive.sink, archive.directory; startpos=startpos, comment=archive.comment, utf8=archive.utf8)
     # sync writes
     flush(archive)
@@ -355,8 +357,8 @@ function Base.mkdir(ziparchive::ZipArchiveSink, path::AbstractString; comment::A
         false,
     )
     # get the offset before writing anything
-    flush(ziparchive)
-    offset = bytes_out(ziparchive) % UInt64
+    stat = TranscodingStreams.stats(ziparchive.sink)
+    offset = stat.transcoded_out % UInt64
     local_file_header = LocalFileHeader(info)
     nb = write(ziparchive, local_file_header)
     central_directory_header = CentralDirectoryHeader(info, offset, comment, true)
@@ -401,10 +403,12 @@ function Base.mkpath(ziparchive::ZipArchiveSink, path::AbstractString; comment::
     return nb + mkdir(ziparchive, p; comment=comment)
 end
 
+function Base.write(za::ZipArchiveSink, value::UInt8)
+    return write(za.sink, value)
+end
+
 function Base.unsafe_write(za::ZipArchiveSink, x::Ptr{UInt8}, n::UInt)
-    bytes_out = unsafe_write(za.sink, x, n)
-    za._bytes_written += bytes_out
-    return bytes_out
+    return unsafe_write(za.sink, x, n)
 end
 
 
@@ -470,7 +474,7 @@ function Base.open(
     ccode = compression_code(compression)
     # get the offset before the local header is written
     flush(archive)
-    offset = bytes_out(archive) % UInt64
+    offset = bytes_written(archive)
     use_descriptor = true
     zip64 = true # always use Zip64 if size is unknown
     info = ZipFileInformation(
@@ -489,14 +493,14 @@ function Base.open(
 
     # 2. set up compression stream
     if ccode == COMPRESSION_STORE
-        sink = NoopStream(archive)
+        codec = Noop()
     elseif ccode == COMPRESSION_DEFLATE
-        sink = DeflateCompressorStream(archive)
+        codec = DeflateCompressor()
     else
         # How did I end up here?
         error("undefined compression type $compression")
     end
-    filesink = CRC32Sink(sink)
+    filesink = TranscodingStream(codec, archive)
 
     # 3. create file object
     zipfile = ZipFileSink(
@@ -570,24 +574,31 @@ function write_file(
     end
 
     # 1. write the raw data to a buffer
+    buffer = IOBuffer()
     ccode = compression_code(compression)
     if ccode == COMPRESSION_STORE
-        cdata = data
+        codec = Noop()
     elseif ccode == COMPRESSION_DEFLATE
-        cdata = transcode(DeflateCompressor, data)
+        codec = DeflateCompressor()
     else
         # How did I end up here?
         error("undefined compression type $compression")
     end
+    filesink = TranscodingStream(codec, buffer)
+    csink = CRC32Sink(CRC32_INIT, filesink)
+    write(csink, data)
+    write(csink, TranscodingStreams.TOKEN_END)
+    flush(csink)
 
     # 2. write local header to parent
-    crc = crc32(data)
-    ubytes = sizeof(data) % UInt64
-    cbytes = sizeof(cdata) % UInt64
+    crc = csink.crc32
+    stats = TranscodingStreams.stats(filesink)
+    ubytes = stats.in % UInt64
+    cbytes = stats.out % UInt64
 
     # get the offset before the local header is written
     flush(archive)
-    offset = bytes_out(archive)
+    offset = bytes_written(archive)
     use_descriptor = false
     zip64 = offset >= typemax(UInt32) || ubytes >= typemax(UInt32) || cbytes >= typemax(UInt32)
 
@@ -606,7 +617,7 @@ function write_file(
     write(archive, local_file_header)
 
     # 3. write the data
-    n_written = write(archive, cdata)
+    n_written = write(archive, take!(buffer))
 
     # 4. Add the entry to the directory
     is_dir = false
@@ -622,7 +633,7 @@ Base.isreadable(za::ZipArchiveSink) = false
 Base.iswritable(za::ZipArchiveSink) = iswritable(za.sink)
 
 """
-    bytes_out(za::ZipArchiveSink) -> UInt64
+    bytes_written(za::ZipArchiveSink) -> UInt64
 
 Return the number of bytes written to the archive so far.
 
@@ -632,6 +643,8 @@ which has no well-defined starting point.
 Note: in order to get an accurate count, flush any buffered but unwritten data
 with `flush(za)` before calling this method.
 """
-function bytes_out(za::ZipArchiveSink)
-    return za._bytes_written
+function bytes_written(za::ZipArchiveSink)
+    stat = TranscodingStreams.stats(za.sink)
+    offset = stat.transcoded_out % UInt64
+    return offset
 end

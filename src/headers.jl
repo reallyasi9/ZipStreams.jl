@@ -1,6 +1,9 @@
 import Base: eof, isdir, seek, read, show, write
 
+using CodecZlib
 using Dates
+using Printf
+using TranscodingStreams
 
 """
     iszipsignature_h(highbytes)
