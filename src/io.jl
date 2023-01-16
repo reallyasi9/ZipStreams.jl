@@ -31,10 +31,8 @@ bytearray(i::T) where {T} = reinterpret(UInt8, [i])
 
 Reinterpret an array of little-endian bytes `a` as an integer of type T.
 """
-bytesle2int(::Type{T}, a::AbstractArray{UInt8}) where {T<:Integer} =
+bytesle2int(a::AbstractArray{UInt8}, ::Type{T}) where {T<:Integer} =
     first(reinterpret(T, ltoh(a)))
-unsafe_bytesle2int(::Type{T}, ptr::Ptr{UInt8}, nb::UInt=sizeof(T)) where {T<:Integer} = 
-    bytesle2int(T, unsafe_wrap(Vector{UInt8}, ptr, nb; own=false))
 
 """
     readstring(io, [nb; encoding="IBM437"])
@@ -123,6 +121,52 @@ msdos2datetime(datetime::Tuple{UInt16, UInt16}) = msdos2datetime(datetime[1], da
         (UInt16(minute(datetime)) << 5) |
         (UInt16(hour(datetime)) << 11)
     return dosdate, dostime
+end
+
+"""
+    seek_backward_to(io, signature)
+
+Seek an IO stream backward until `signature` is found.
+
+Actually jumps backward 4k at a time, then searches forward for the last matching
+signature in the chunk. This repeats until `signature` is found or until the
+algorithm attempts to seek backward when `position(io) == 0`.
+
+On success, the stream's position is set to the starting byte of the last found
+signature in the stream.
+
+Seeks to `seekend(io)` if the signature is not found.
+"""
+function seek_backward_to(io::IO, signature::Union{UInt8,AbstractVector{UInt8}})
+    # TODO: This number was pulled out of a hat. Should probably be tuned.
+    nbytes = max(4096, 10 * length(signature))
+    # Initialize in a way to avoid accidental matches in dirty memory.
+    cache = (all(==(0), signature)) ? ones(UInt8, nbytes) : zeros(UInt8, nbytes)
+    skip(io, -nbytes)
+    # Move back some large number of bytes per jump, but make sure there is
+    # enough overlap to find the signature if the last jump stradled the line.
+    jump_distance = nbytes - sizeof(signature) + 1
+    while true
+        mark(io)
+        here = position(io)
+        last_time = here == 0
+        read!(io, cache)
+        pos = findlast(signature, cache)
+        if !isnothing(pos)
+            reset(io)
+            skip(io, first(pos) - 1)
+            break
+        end
+        if last_time
+            unmark(io)
+            seekend(io)
+            break
+        end
+        reset(io)
+        # skipping to beyond the beginning of the IO causes problems!
+        skip(io, -min(jump_distance, here))
+    end
+    return
 end
 
 const SIZE_PREFIXES = String["", "K", "M", "G", "T", "P", "E"]
