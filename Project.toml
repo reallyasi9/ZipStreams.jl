@@ -13,7 +13,10 @@ TranscodingStreams = "3bb67fe8-82b1-5028-8e26-92a6c54297fa"
 Zlib_jll = "83775a58-1f1d-513f-b197-d71354ab007a"
 
 [compat]
+CodecZlib = "0.7"
 StringEncodings = "0.3"
+TranscodingStreams = "0.9"
+Zlib_jll = "1.2"
 julia = "1.7.0"
 
 [extras]
