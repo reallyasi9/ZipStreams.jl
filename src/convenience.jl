@@ -56,7 +56,7 @@ function zip_files(archive_filename::AbstractString, input_filename::AbstractStr
     else
         files = [input_filename]
     end
-    zip_archive(archive_filename, files; kwargs...)
+    zip_files(archive_filename, files; kwargs...)
 end
 
 zip_file(archive_filename::AbstractString, input_filename::AbstractString; kwargs...) = zip_files(archive_filename, [input_filename]; kwargs...)

@@ -354,28 +354,97 @@ end
 end
 
 @testset "Convenient extract and archive" begin
-    tdir = mktempdir()
     @testset "Unzip with unzip_files" begin
-        unzip_files(MULTI_FILE; output_path=tdir)
-        for info in MULTI_INFO
-            if isdir(info)
-                @test isdir(joinpath(tdir, info.name))
-            else
-                @test isfile(joinpath(tdir, info.name))
-                @test read(joinpath(tdir, info.name), String) == FILE_CONTENT
+        @testset "One file" begin
+            mktempdir() do tdir
+                filename = "subdir/hello2.txt"
+                unzip_files(MULTI_FILE, filename; output_path=tdir, make_path=true)
+                @test isfile(joinpath(tdir, filename))
+                @test read(joinpath(tdir, filename), String) == FILE_CONTENT
+            end
+        end
+        @testset "File list" begin
+            mktempdir() do tdir
+                filenames = ["hello1.txt", "subdir/hello3.txt"]
+                unzip_files(MULTI_FILE, filenames; output_path=tdir, make_path=true)
+                for filename in filenames
+                    @test isfile(joinpath(tdir, filename))
+                    @test read(joinpath(tdir, filename), String) == FILE_CONTENT
+                end
+            end
+        end
+        @testset "All files" begin
+            mktempdir() do tdir
+                unzip_files(MULTI_FILE; output_path=tdir)
+                for info in MULTI_INFO
+                    if isdir(info)
+                        @test isdir(joinpath(tdir, info.name))
+                    else
+                        @test isfile(joinpath(tdir, info.name))
+                        @test read(joinpath(tdir, info.name), String) == FILE_CONTENT
+                    end
+                end
             end
         end
     end
     @testset "Zip back up with zip_files" begin
-        archive_name = tempname(tdir)
-        zip_files(archive_name, readdir(tdir; join=true))
+        mktempdir() do tdir
+            unzip_files(MULTI_FILE; output_path=tdir, make_path=true)
 
-        archive = zipsource(archive_name)
-        for (f, info) in zip(archive, filter(x -> !isdir(x), MULTI_INFO))
-            @test !isnothing(f)
-            # @test f.info == info
+            @testset "One file" begin
+                mktemp() do path, io
+                    filename = "subdir/hello2.txt"
+                    zip_files(path, joinpath(tdir, filename))
+                    zipsource(path) do source
+                        f = next_file(source)
+                        @test f.info.name == basename(filename) # zip_files does not recreate the path within the ZIP archive
+                        @test read(f, String) == FILE_CONTENT
+                    end
+                end
+            end
+            
+            @testset "File list" begin
+                mktemp() do path, io
+                    filenames = ["hello1.txt", "subdir/hello3.txt"]
+                    zip_files(path, joinpath.(Ref(tdir), filenames))
+                    zipsource(path) do source
+                        for (f, filename) in zip(source, filenames)
+                            @test f.info.name == basename(filename) # zip_files does not recreate the path within the ZIP archive
+                            @test read(f, String) == FILE_CONTENT
+                        end
+                    end
+                end
+            end
+            
+            @testset "All files" begin
+                @testset "No recurse directories (default)" begin
+                    mktemp() do path, io
+                        zip_files(path, readdir(tdir; join=true))
+        
+                        expected = filter(x -> !isdir(x) && length(split(x.name, ZipStreams.ZIP_PATH_DELIMITER)) == 1, MULTI_INFO)
+                        zipsource(path) do archive
+                            for (f, info) in zip(archive, expected)
+                                @test f.info.name == info.name
+                                @test read(f, String) == FILE_CONTENT
+                            end
+                        end
+                    end
+                end
+                @testset "Recurse directories" begin
+                    mktemp() do path, io
+                        zip_files(path, tdir; recurse_directories=true)
+        
+                        expected = filter(x -> !isdir(x) && length(split(x.name, ZipStreams.ZIP_PATH_DELIMITER)) == 1, MULTI_INFO)
+                        zipsource(path) do archive
+                            for (f, info) in zip(archive, expected)
+                                @test f.info.name == info.name
+                                @test read(f, String) == FILE_CONTENT
+                            end
+                        end
+                    end
+                end
+            end
         end
-        close(archive)
     end
 end
 
@@ -399,7 +468,8 @@ end
         @test read(file, String) == FILE_CONTENT
 
         file = next_file(source)
-        @test file.info.name == "hello.txt"
+
+        @test file.info.name == "subdir/hello_again.txt"
         @test file.info.descriptor_follows == true
         @test read(file, String) == FILE_CONTENT
     end
