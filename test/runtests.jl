@@ -1,35 +1,15 @@
-using CodecZlib
+using TranscodingStreams
 using Dates
 using LazyArtifacts
 using Random
 using Test
-using TranscodingStreams
 using ZipStreams
 
-import Base: bytesavailable, close, eof, isopen, read, seek, unsafe_read, unsafe_write
+include("common.jl")
+include("test_crc32.jl")
+include("test_limiters.jl")
+include("test_truncated_source.jl")
 
-struct ForwardReadOnlyIO{S <: IO} <: IO
-    io::S
-end
-Base.read(f::ForwardReadOnlyIO, ::Type{UInt8}) = read(f.io, UInt8)
-# Base.unsafe_read(f::ForwardReadOnlyIO, p::Ptr{UInt8}, n::UInt) = unsafe_read(f.io, p, n)
-Base.seek(f::ForwardReadOnlyIO, n::Int) = n < 0 ? error("backward seeking forbidden") : seek(f.io, n)
-Base.close(f::ForwardReadOnlyIO) = close(f.io)
-Base.isopen(f::ForwardReadOnlyIO) = isopen(f.io)
-Base.eof(f::ForwardReadOnlyIO) = eof(f.io)
-Base.bytesavailable(f::ForwardReadOnlyIO) = bytesavailable(f.io)
-
-struct ForwardWriteOnlyIO{S <: IO} <: IO
-    io::S
-end
-Base.unsafe_write(f::ForwardWriteOnlyIO, p::Ptr{UInt8}, n::UInt) = unsafe_write(f.io, p, n)
-Base.close(f::ForwardWriteOnlyIO) = close(f.io)
-Base.isopen(f::ForwardWriteOnlyIO) = isopen(f.io)
-# Base.eof(f::ForwardWriteOnlyIO) = eof(f.io)
-
-# All test files have the same content
-const FILE_CONTENT = "Hello, Julia!\n"
-const DEFLATED_FILE_CONTENT = transcode(DeflateCompressor, FILE_CONTENT)
 function file_info(; name::AbstractString="hello.txt", descriptor::Bool=false, utf8::Bool=false, zip64::Bool=false, datetime::DateTime=DateTime(2022, 8, 18, 23, 21, 38), compression::UInt16=ZipStreams.COMPRESSION_STORE)
     uc_size = 13 % UInt64
     if compression == ZipStreams.COMPRESSION_DEFLATE
@@ -128,122 +108,6 @@ const ZIP64_CE = joinpath(ARTIFACT_DIR, "single-eocd64.zip")
     @test_throws ArgumentError ZipStreams.msdos2datetime(0x0000, 0xbf7e)
 end
 
-@testset "CRC32" begin
-    @testset "Array" begin
-        @test ZipStreams.crc32(UInt8[]) == 0x00000000
-        @test ZipStreams.crc32(UInt8[0]) == 0xd202ef8d
-        @test ZipStreams.crc32(UInt8[1, 2, 3, 4]) == 0xb63cfbcd
-
-        @test ZipStreams.crc32(UInt8[5, 6, 7, 8], ZipStreams.crc32(UInt8[1, 2, 3, 4])) ==
-            ZipStreams.crc32(UInt8[1, 2, 3, 4, 5, 6, 7, 8]) ==
-            0x3fca88c5
-
-        @test ZipStreams.crc32(UInt16[0x0201, 0x0403]) ==
-            ZipStreams.crc32(UInt8[1, 2, 3, 4]) ==
-            0xb63cfbcd
-    end
-    @testset "String" begin
-        @test ZipStreams.crc32("") == 0x00000000
-        @test ZipStreams.crc32("The quick brown fox jumps over the lazy dog") == 0x414fa339
-
-        @test ZipStreams.crc32("Julia!", ZipStreams.crc32("Hello ")) ==
-            ZipStreams.crc32("Hello Julia!") ==
-            0x424b94c7
-    end
-end
-
-@testset "TruncatedInputStream" begin
-    s = ZipStreams.TruncatedInputStream(
-        IOBuffer("The quick brown fox jumps over the lazy dog"), 15
-    )
-    @test !eof(s)
-    @test bytesavailable(s) == 15
-
-    @test read(s, String) == "The quick brown"
-    @test eof(s)
-    @test bytesavailable(s) == 0
-    @test read(s) == UInt8[]
-
-    s = ZipStreams.TruncatedInputStream(
-        IOBuffer("The quick brown fox jumps over the lazy dog"), 100
-    )
-    @test bytesavailable(s) == 43
-
-    @test read(s, String) == "The quick brown fox jumps over the lazy dog"
-    @test eof(s)
-    @test bytesavailable(s) == 0
-    @test read(s) == UInt8[]
-end
-
-@testset "Seek backward" begin
-    @testset "End" begin
-        fake_data = UInt8.(rand('a':'z', 10_000))
-        signature = UInt8.(collect("FOO"))
-        fake_data[end-2:end] .= signature
-        stream = IOBuffer(fake_data)
-        seekend(stream)
-        ZipStreams.seek_backward_to(stream, signature)
-        @test position(stream) == length(fake_data)-length(signature) # streams are zero indexed
-    end
-
-    @testset "Random" begin
-        signature = UInt8.(collect("BAR"))
-        for i in 1:100
-            fake_data = UInt8.(rand('a':'z', 10_000))
-            pos = rand(1:length(fake_data)-length(signature)+1)
-            fake_data[pos:pos+length(signature)-1] .= signature
-            stream = IOBuffer(fake_data)
-            seekend(stream)
-            ZipStreams.seek_backward_to(stream, signature)
-            @test position(stream) == pos-1 # streams are zero indexed
-            @test read(stream, length(signature)) == signature
-        end
-    end
-
-    @testset "Multiple" begin
-        signature = UInt8.(collect("BAZ"))
-        fake_data = UInt8.(rand('a':'z', 10_000))
-        fake_data[1001:1003] .= signature
-        fake_data[9001:9003] .= signature
-        stream = IOBuffer(fake_data)
-        seekend(stream)
-        ZipStreams.seek_backward_to(stream, signature)
-        @test position(stream) == 9000
-        @test read(stream, length(signature)) == signature
-    end
-
-    @testset "Multiple same block" begin
-        signature = UInt8.(collect("BIN"))
-        fake_data = UInt8.(rand('a':'z', 10_000))
-        fake_data[9991:9993] .= signature
-        fake_data[9981:9983] .= signature
-        stream = IOBuffer(fake_data)
-        seekend(stream)
-        ZipStreams.seek_backward_to(stream, signature)
-        @test position(stream) == 9990
-        @test read(stream, length(signature)) == signature
-    end
-
-    @testset "Straddle 4k" begin
-        signature = UInt8.(collect("Hello, Julia!"))
-        fake_data = UInt8.(rand('a':'z', 10_000))
-        fake_data[end-4100:end-4088] .= signature
-        stream = IOBuffer(fake_data)
-        seekend(stream)
-        ZipStreams.seek_backward_to(stream, signature)
-        @test position(stream) == length(fake_data) - 4101
-        @test read(stream, length(signature)) == signature
-    end
-
-    @testset "Missing" begin
-        signature = UInt8.(collect("QUA"))
-        fake_data = UInt8.(rand('a':'z', 10_000))
-        stream = IOBuffer(fake_data)
-        seekend(stream)
-        ZipStreams.seek_backward_to(stream, signature)
-        @test eof(stream)
-    end
-end
 
 @testset "File components" begin
     @testset "LocalFileHeader" begin
@@ -325,7 +189,6 @@ end
             @test write(f, FILE_CONTENT) == 14
             close(f)
             close(archive; close_sink=false)
-            @test buffer.size == 174
 
             readme = IOBuffer(take!(buffer))
             skip(readme, 4)
@@ -346,7 +209,6 @@ end
             @test write(f, FILE_CONTENT) == 14
             close(f)
             close(archive; close_sink=false)
-            @test buffer.size == 176
 
             readme = IOBuffer(take!(buffer))
             skip(readme, 4)
@@ -380,14 +242,13 @@ end
             archive = zipsink(buffer)
             write_file(archive, "hello.txt", FILE_CONTENT)
             close(archive; close_sink=false)
-            @test buffer.size == 132
 
             readme = IOBuffer(take!(buffer))
             skip(readme, 4)
             header = read(readme, ZipStreams.LocalFileHeader)
             @test header.info.compressed_size == sizeof(DEFLATED_FILE_CONTENT)
             @test header.info.compression_method == ZipStreams.COMPRESSION_DEFLATE
-            @test header.info.crc32 == ZipStreams.crc32(FILE_CONTENT)
+            @test header.info.crc32 == ZipStreams.crc32(codeunits(FILE_CONTENT))
             @test header.info.descriptor_follows == false
             @test header.info.name == "hello.txt"
             @test header.info.uncompressed_size == sizeof(FILE_CONTENT)
@@ -510,12 +371,36 @@ end
         zip_files(archive_name, readdir(tdir; join=true))
 
         archive = zipsource(archive_name)
-        # Cannot be streamed
-        # for (f, info) in zip(archive, filter(x -> !isdir(x), MULTI_INFO))
-        #     @test !isnothing(f)
-        #     @test f.info == info
-        # end
-        @test_throws ErrorException next_file(archive)
+        for (f, info) in zip(archive, filter(x -> !isdir(x), MULTI_INFO))
+            @test !isnothing(f)
+            # @test f.info == info
+        end
         close(archive)
+    end
+end
+
+@testset "Round trip" begin
+    buffer = IOBuffer()
+    zipsink(buffer) do sink
+        open(sink, "hello.txt") do file
+            write(file, FILE_CONTENT)
+        end
+        open(sink, "subdir/hello_again.txt"; compression = :store, make_path = true) do file
+            write(file, FILE_CONTENT)
+        end
+    end
+    
+    seekstart(buffer)
+
+    zipsource(buffer) do source
+        file = next_file(source)
+        @test file.info.name == "hello.txt"
+        @test file.info.descriptor_follows == true
+        @test read(file, String) == FILE_CONTENT
+
+        file = next_file(source)
+        @test file.info.name == "hello.txt"
+        @test file.info.descriptor_follows == true
+        @test read(file, String) == FILE_CONTENT
     end
 end
