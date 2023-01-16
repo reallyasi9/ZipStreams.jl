@@ -5,6 +5,8 @@ using ZipFile # for comparison
 
 const SUITE = BenchmarkGroup()
 
+include("benchmark_crc32.jl")
+
 function count_even(io::IO)
     n = 0
     while !eof(io)
