@@ -42,7 +42,7 @@ function zipfilesource(info::ZipFileInformation, io::IO)
     trunc_source = TruncatedSource(limiter, io)
 
     if info.compression_method == COMPRESSION_DEFLATE
-        source = DeflateDecompressorStream(trunc_source; stop_on_end=false) # the truncator will handle stopping at the right time
+        source = DeflateDecompressorStream(trunc_source; stop_on_end=true) # the truncator will signal :end to the stream
     elseif info.compression_method == COMPRESSION_STORE
         source = NoopStream(trunc_source)
     else
