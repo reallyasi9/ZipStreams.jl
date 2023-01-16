@@ -366,17 +366,41 @@ end
             end
         end
     end
-    # @testset "Zip back up with zip_files" begin
-    #     archive_name = tempname(tdir)
-    #     zip_files(archive_name, readdir(tdir; join=true))
+    @testset "Zip back up with zip_files" begin
+        archive_name = tempname(tdir)
+        zip_files(archive_name, readdir(tdir; join=true))
 
-    #     archive = zipsource(archive_name)
-    #     # Cannot be streamed
-    #     # for (f, info) in zip(archive, filter(x -> !isdir(x), MULTI_INFO))
-    #     #     @test !isnothing(f)
-    #     #     @test f.info == info
-    #     # end
-    #     @test_throws ErrorException next_file(archive)
-    #     close(archive)
-    # end
+        archive = zipsource(archive_name)
+        for (f, info) in zip(archive, filter(x -> !isdir(x), MULTI_INFO))
+            @test !isnothing(f)
+            # @test f.info == info
+        end
+        close(archive)
+    end
+end
+
+@testset "Round trip" begin
+    buffer = IOBuffer()
+    zipsink(buffer) do sink
+        open(sink, "hello.txt") do file
+            write(file, FILE_CONTENT)
+        end
+        open(sink, "subdir/hello_again.txt"; compression = :store, make_path = true) do file
+            write(file, FILE_CONTENT)
+        end
+    end
+    
+    seekstart(buffer)
+
+    zipsource(buffer) do source
+        file = next_file(source)
+        @test file.info.name == "hello.txt"
+        @test file.info.descriptor_follows == true
+        @test read(file, String) == FILE_CONTENT
+
+        file = next_file(source)
+        @test file.info.name == "hello.txt"
+        @test file.info.descriptor_follows == true
+        @test read(file, String) == FILE_CONTENT
+    end
 end
