@@ -1,6 +1,6 @@
 """
     zip_files(out_filename, files; [keyword_args])
-    zip_files(out_filename, dir; recursive=false, [keyword_args])
+    zip_files(out_filename, dir; recurse_directories=false, [keyword_args])
 
 Create an archive from files on disk.
 
@@ -11,8 +11,8 @@ between the current directory (`"."`) and the full path of the file, so if `arch
 is "/a/b/archive.zip" and one of `files` is "/a/c/file", then the file will be witten
 with the path "c/file".
 
-If `dir` is a directory and `recursive` is `true`, then all files and directories found when
-traversing the directory will be added to the archive. If `recursive` is `false` (the
+If `dir` is a directory and `recurse_directories` is `true`, then all files and directories found when
+traversing the directory will be added to the archive. If `recurse_directories` is `false` (the
 default), then subdirectories of `dir` will not be traversed.
 
 All files are written to the archive using the default arguments specified by
@@ -46,9 +46,9 @@ function recurse_all_files(path::AbstractString)
     return files
 end
 
-function zip_files(archive_filename::AbstractString, input_filename::AbstractString; recursive::Bool=false, kwargs...)
+function zip_files(archive_filename::AbstractString, input_filename::AbstractString; recurse_directories::Bool=false, kwargs...)
     if isdir(input_filename)
-        if recursive
+        if recurse_directories
             files = recurse_all_files(input_filename)
         else
             files = filter(x -> !isdir(x), readdir(input_filename; join=true))
