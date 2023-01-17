@@ -267,6 +267,11 @@ function Base.unsafe_read(zs::ZipArchiveSource, p::Ptr{UInt8}, nb::UInt64)
     unsafe_read(zs.source, p, nb)
     return nothing
 end
+function Base.readbytes!(zs::ZipArchiveSource, b::AbstractVector{UInt8}, nb=length(b))
+    br = readbytes!(zs.source, b, nb)
+    zs._bytes_read += br
+    return br
+end
 Base.position(zs::ZipArchiveSource) = zs._bytes_read
 bytes_in(zs::ZipArchiveSource) = position(zs)
 
