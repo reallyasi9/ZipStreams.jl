@@ -75,7 +75,7 @@ function validate(zf::ZipFileSource)
     data = read(zf)
     badcom = bytes_in(zf) != zf.info.compressed_size
     badunc = bytes_out(zf) != zf.info.uncompressed_size
-    badcrc = crc32(zf) != zf.info.crc32
+    badcrc = crc32(data) != zf.info.crc32
 
     if badcom
         @error "Compressed size check failed: expected $(zf.info.compressed_size), got $(bytes_in(zf))"
@@ -137,7 +137,7 @@ Base.position(zf::ZipFileSource) = position(zf.source)
 function bytes_in(zf::ZipFileSource)
     mode = zf.source.state.mode
     if mode ∈ (:stop, :close)
-        return info.compressed_size
+        return zf.info.compressed_size
     end
     stats = TranscodingStreams.stats(zf.source)
     return stats.transcoded_in
@@ -146,7 +146,7 @@ end
 function bytes_out(zf::ZipFileSource)
     mode = zf.source.state.mode
     if mode ∈ (:stop, :close)
-        return info.uncompressed_size
+        return zf.info.uncompressed_size
     end
     stats = TranscodingStreams.stats(zf.source)
     return stats.transcoded_out
@@ -187,12 +187,11 @@ struct as the file is read from the archive.
 
 Create `ZipArchiveSource` objects using the [`zipsource`](@ref) function.
 """
-mutable struct ZipArchiveSource <: IO
-    source::IO
+mutable struct ZipArchiveSource{S<:IO} <: IO
+    source::NoopStream{S}
     directory::Vector{ZipFileInformation}
     offsets::Vector{UInt64}
 
-    _bytes_read::UInt64
     # make sure we do not iterate into the central directory
     _no_more_files::Bool
 end
@@ -239,7 +238,11 @@ the lifetime of the argument.
 
 """
 function zipsource(io::IO)
-    zs = ZipArchiveSource(io, ZipFileInformation[], UInt64[], UInt64(0), false)
+    zs = ZipArchiveSource(NoopStream(io), ZipFileInformation[], UInt64[], false)
+    return zs
+end
+function zipsource(io::NoopStream) 
+    zs = ZipArchiveSource(io, ZipFileInformation[], UInt64[], false)
     return zs
 end
 zipsource(fname::AbstractString; kwargs...) = zipsource(Base.open(fname, "r"); kwargs...)
@@ -258,21 +261,11 @@ for func in (:eof, :isopen, :bytesavailable, :close, :isreadable)
     @eval Base.$func(s::ZipArchiveSource) = $func(s.source)
 end
 
-function Base.read(zs::ZipArchiveSource, ::Type{UInt8}) 
-    zs._bytes_read += 1
-    return read(zs.source, UInt8)
-end
-function Base.unsafe_read(zs::ZipArchiveSource, p::Ptr{UInt8}, nb::UInt64)
-    zs._bytes_read += nb
-    unsafe_read(zs.source, p, nb)
-    return nothing
-end
-function Base.readbytes!(zs::ZipArchiveSource, b::AbstractVector{UInt8}, nb=length(b))
-    br = readbytes!(zs.source, b, nb)
-    zs._bytes_read += br
-    return br
-end
-Base.position(zs::ZipArchiveSource) = zs._bytes_read
+Base.read(zs::ZipArchiveSource, ::Type{UInt8}) = read(zs.source, UInt8)
+Base.unsafe_read(zs::ZipArchiveSource, p::Ptr{UInt8}, nb::UInt64) = unsafe_read(zs.source, p, nb)
+Base.readbytes!(zs::ZipArchiveSource, b::AbstractVector{UInt8}, nb=length(b)) = readbytes!(zs.source, b, nb)
+
+Base.position(zs::ZipArchiveSource) = TranscodingStreams.stats(zs.source).in % UInt64
 bytes_in(zs::ZipArchiveSource) = position(zs)
 
 function Base.skip(zs::ZipArchiveSource, n::Integer)

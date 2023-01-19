@@ -55,10 +55,10 @@ function _crc32(io::IO, nb::Integer, crc::UInt32=CRC32_INIT)
     buf = Vector{UInt8}(undef, min(nb, 24576))
     while !eof(io) && nb > 24576
         n = readbytes!(io, buf)
-        crc = unsafe_crc32(buf, n % Csize_t, crc)
+        crc = @GC.preserve buf unsafe_crc32(pointer(buf), n % Csize_t, crc)
         nb -= n
     end
-    return unsafe_crc32(buf, readbytes!(io, buf, min(nb, length(buf))) % Csize_t, crc)
+    return @GC.preserve buf unsafe_crc32(pointer(buf), readbytes!(io, buf, min(nb, length(buf))) % Csize_t, crc)
 end
 
 # optimized (copy-free) crc of IOBuffer (see similar crc32c function in base/iobuffer.jl)
