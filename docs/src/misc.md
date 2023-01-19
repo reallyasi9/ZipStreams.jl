@@ -4,7 +4,7 @@
 CurrentModule = ZipStreams
 ```
 
-If you want to simply read an archive from disk and extract some files back to disk, you can use the convenience method `unzip_files` or `unzip_file`. Note that you can only read files that can be opened with [`open(::ZipArchiveSource, ::AbstractString)`](@ref) (i.e., files not written with Data Descriptors):
+If you want to simply read an archive from disk and extract some files back to disk, you can use the convenience method `unzip_files` or `unzip_file`:
 
 ```julia
 using ZipStreams
@@ -56,8 +56,6 @@ write(path2, "Goodbye, Julia!")
 archive_name = tempname(dir)
 zip_files(archive_name, [path1, path2])
 ```
-
-These files are written with data descriptors, so they cannot be read using the streaming methods of this package.
 
 ## API
 ```@docs

@@ -383,7 +383,7 @@ The `comment` string will be added to the archive's metadata only for the last d
 the path. All other directories created by this method will have no comment. This does not
 affect the stored data in any way.
 
-Returns the number of bytes written to the archive when creating p.
+Returns the number of bytes written to the archive when creating the entire path.
 """
 function Base.mkpath(ziparchive::ZipArchiveSink, path::AbstractString; comment::AbstractString="")
     paths = _split_norm_path(path)
@@ -425,16 +425,6 @@ Create a file within a Zip archive and return a handle for writing.
     files in the Zip archive share the same name. This method will allow the user
     to create files with the same name in a single Zip archive, but other software
     may not behave as expected when reading the archive.
-
-!!! note "Streaming output"
-
-    File written using `ZipFileSink` methods are incompatable with the
-    streaming reading methods of `ZipFileSource`. This is because the
-    program cannot not know the final compressed and uncompressed file size nor
-    the CRC-32 checksum while writing until the file is closed, meaning these
-    fields are not accurate in the Local File Header. The streaming reader relies
-    on file size information in the Local File Header to know when to stop reading
-    file data, thus the two methods are incompatable.
 """
 function Base.open(
     archive::ZipArchiveSink,
@@ -536,6 +526,12 @@ for which the method `write(io, data)` is defined.
 Returns the number of bytes written to the archive.
 
 Keyword arguments are the same as those accepted by [`open(::ZipArchiveSink, ::AbstractString)`](@ref).
+
+!!! note "Memory requirements"
+
+    This method reads `data` into a buffer before writing it to the archive. Both `data` and
+    the buffered (potentially compressed) copy must be able to fit into memory
+    simultaneously.
 """
 function write_file(
     archive::ZipArchiveSink,
