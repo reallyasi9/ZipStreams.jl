@@ -75,7 +75,6 @@ function validate(zf::ZipFileSource)
     data = read(zf)
     badcom = bytes_in(zf) != zf.info.compressed_size
     badunc = bytes_out(zf) != zf.info.uncompressed_size
-    badcrc = crc32(data) != zf.info.crc32
 
     if badcom
         @error "Compressed size check failed: expected $(zf.info.compressed_size), got $(bytes_in(zf))"
@@ -83,8 +82,14 @@ function validate(zf::ZipFileSource)
     if badunc
         @error "Uncompressed size check failed: expected $(zf.info.uncompressed_size), got $(bytes_out(zf))"
     end
+    if !badunc && length(data) < zf.info.uncompressed_size
+        @warn "Unable to check CRC-32: data already read from stream"
+        badcrc = false
+    else
+        badcrc = crc32(data) != zf.info.crc32
+    end
     if badcrc
-        @error "CRC-32 check failed: expected $(zf.info.crc32), got $(crc32(zf))"
+        @error "CRC-32 check failed: expected $(string(zf.info.crc32; base=16)), got $(string(crc32(data); base=16))"
     end
     if badcom || badunc || badcrc
         error("validation failed")
