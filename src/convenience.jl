@@ -25,9 +25,13 @@ function zip_files(archive_filename::AbstractString, input_filenames::AbstractVe
         for filename in input_filenames
             rpath = relpath(filename) # relative to . by default
             clean_path = strip_dots(rpath)
-            open(filename, "r") do io
-                open(sink, clean_path; make_path=true) do fsink
-                    write(fsink, io)
+            if isdir(filename)
+                mkpath(sink, clean_path)
+            else
+                open(filename, "r") do io
+                    open(sink, clean_path; make_path=true) do fsink
+                        write(fsink, io)
+                    end
                 end
             end
         end
@@ -35,16 +39,7 @@ function zip_files(archive_filename::AbstractString, input_filenames::AbstractVe
     return
 end
 
-function recurse_all_files(path::AbstractString)
-    files = String[]
-    for (root, dirs, files) in walkdir(path)
-        files = joinpath.(Ref(root), files)
-        for dir in dirs
-            append!(files, recurse_all_files(joinpath(root, dir)))
-        end
-    end
-    return files
-end
+recurse_all_files(path::AbstractString) = mapreduce(((root, dirs, files),) -> joinpath.(Ref(root), files), vcat, walkdir(path))
 
 function zip_files(archive_filename::AbstractString, input_filename::AbstractString; recurse_directories::Bool=false, kwargs...)
     if isdir(input_filename)
@@ -63,12 +58,9 @@ zip_file(archive_filename::AbstractString, input_filename::AbstractString; kwarg
 
 function strip_dots(path::AbstractString)
     first_non_dot_idx = 1
-    dirs = split(path, ZIP_PATH_DELIMITER)
-    for (i, dir) in enumerate(dirs)
-        if dir != "." && dir != ".."
-            first_non_dot_idx = i
-        end
-    end
+    # This takes filesystem paths and not ZIP archive paths, so use splitpath
+    dirs = splitpath(path)
+    first_non_dot_idx = findfirst(dir -> dir != "." && dir != "..", dirs)
     return join(dirs[first_non_dot_idx:end], ZIP_PATH_DELIMITER)
 end
 
