@@ -1,7 +1,5 @@
 import ZipStreams: zipsource, validate, next_file
 
-include("common.jl")
-
 @testset "validate" begin
     file_content = collect(b"Hello, Julia!\n")
     @testset "Single file" begin
