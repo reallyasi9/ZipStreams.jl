@@ -1,9 +1,5 @@
 import ZipStreams: crc32, bytes_in, bytes_out, CRC32Source, CRC32Sink
 
-const EMPTY_CRC = UInt32(0)
-const ZERO_CRC = UInt32(0xD202EF8D)
-const FILE_CONTENT_CRC = UInt32(0xFE69594D)
-
 @testset "Raw CRC32" begin
     @test crc32(UInt8[]) == EMPTY_CRC
     @test crc32(UInt8[0]) == ZERO_CRC

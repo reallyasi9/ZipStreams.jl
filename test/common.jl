@@ -59,23 +59,11 @@ Base.isopen(f::ForwardWriteOnlyIO) = isopen(f.io)
 
 # All test files have the same content
 const FILE_CONTENT = "Hello, Julia!\n"
-const DEFLATED_FILE_CONTENT = transcode(DeflateCompressor, FILE_CONTENT)
-
-const FILE_INFO = file_info(; compression=ZipStreams.COMPRESSION_DEFLATE, datetime=DateTime(2023, 1, 20, 0, 35, 14))
-const ZIP64_FILE_INFO = file_info(; compression=ZipStreams.COMPRESSION_DEFLATE, zip64=true)
-const SUBDIR_INFO = subdir_info()
-const MULTI_INFO = ZipStreams.ZipFileInformation[
-    file_info(; name="hello1.txt", datetime=DateTime(2022, 8, 19, 21, 46, 44)),
-    subdir_info(; name="subdir/", datetime=DateTime(2022, 8, 19, 21, 47, 34)),
-    file_info(; name="subdir/hello2.txt", datetime=DateTime(2022, 8, 19, 21, 47, 24)),
-    file_info(; name="subdir/hello3.txt", datetime=DateTime(2022, 8, 19, 21, 47, 34)),
-    subdir_info(; name="subdir/subdir/", datetime=DateTime(2022, 8, 19, 21, 47, 44)),
-    subdir_info(; name="subdir/subdir/subdir/", datetime=DateTime(2022, 8, 19, 21, 48, 2)),
-    file_info(; name="subdir/subdir/subdir/hello5.txt", datetime=DateTime(2022, 8, 19, 21, 47, 54)),
-    file_info(; name="subdir/subdir/subdir/hello6.txt", datetime=DateTime(2022, 8, 19, 21, 48, 00)),
-    file_info(; name="subdir/subdir/subdir/hello7.txt", datetime=DateTime(2022, 8, 19, 21, 48, 02)),
-    file_info(; name="subdir/subdir/hello4.txt", datetime=DateTime(2022, 8, 19, 21, 47, 44)),
-]
+const FILE_BYTES = collect(codeunits(FILE_CONTENT))
+const DEFLATED_FILE_BYTES = UInt8[0xf3, 0x48, 0xcd, 0xc9, 0xc9, 0xd7, 0x51, 0xf0, 0x2a, 0xcd, 0xc9, 0x4c, 0x54, 0xe4, 0x02, 0x00]
+const EMPTY_CRC = UInt32(0)
+const ZERO_CRC = UInt32(0xD202EF8D)
+const FILE_CONTENT_CRC = UInt32(0xFE69594D)
 
 # Simple tests
 const ARTIFACT_DIR = artifact"testfiles"
@@ -99,5 +87,3 @@ const MULTI_DD_FILE = joinpath(ARTIFACT_DIR, "multi-dd.zip")
 
 # Pathological tests
 const PATHOLOGICAL_DD_FILE = joinpath(ARTIFACT_DIR, "single-dd-pathological.zip")
-
-@test Any[] == detect_ambiguities(Base, Core, ZipStreams)

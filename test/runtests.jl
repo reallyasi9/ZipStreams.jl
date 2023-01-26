@@ -5,60 +5,68 @@ using Random
 using Test
 using ZipStreams
 
+@test Any[] == detect_ambiguities(Base, Core, ZipStreams)
+
 include("common.jl")
+include("test_datetime.jl")
 include("test_crc32.jl")
 include("test_limiters.jl")
 include("test_truncated_source.jl")
 include("test_validate.jl")
 
-@testset "MSDOSDateTime" begin
-    # round trip
-    test_now = now()
-    @test test_now - (test_now |> ZipStreams.datetime2msdos |> ZipStreams.msdos2datetime) < Second(2)
-
-    # minimum datetime
-    @test ZipStreams.datetime2msdos(DateTime(1980, 1, 1, 0, 0, 0)) == (0x0021, 0x0000)
-    @test ZipStreams.msdos2datetime(0x0021, 0x0000) == DateTime(1980, 1, 1, 0, 0, 0)
-    # equivalent in Julia
-    @test ZipStreams.datetime2msdos(DateTime(1979,12,31,24, 0, 0)) == (0x0021, 0x0000)
-    # errors (separate minima for day and month)
-    @test_throws InexactError ZipStreams.datetime2msdos(DateTime(1979,12,31,23,59,59))
-    @test_throws ArgumentError ZipStreams.msdos2datetime(0x0040, 0x0000)
-    @test_throws ArgumentError ZipStreams.msdos2datetime(0x0001, 0x0000)
-
-    # maximum datetime
-    @test ZipStreams.datetime2msdos(DateTime(2107,12,31,23,59,58)) == (0xff9f, 0xbf7d)
-    @test ZipStreams.msdos2datetime(0xff9f, 0xbf7d) == DateTime(2107,12,31,23,59,58)
-    # errors (separate maxima for month/day, hour, minute, and second)
-    @test_throws ArgumentError ZipStreams.datetime2msdos(DateTime(2107,12,31,24, 0, 0))
-    @test_throws ArgumentError ZipStreams.msdos2datetime(0xffa0, 0x0000)
-    @test_throws ArgumentError ZipStreams.msdos2datetime(0xffa0, 0x0000)
-    @test_throws ArgumentError ZipStreams.msdos2datetime(0x0000, 0xc000)
-    @test_throws ArgumentError ZipStreams.msdos2datetime(0x0000, 0xbf80)
-    @test_throws ArgumentError ZipStreams.msdos2datetime(0x0000, 0xbf7e)
-end
-
 
 @testset "File components" begin
+    expected_exceptions = Dict(
+        "Empty archive" => (EMPTY_FILE => ArgumentError),
+    )
+    expected_headers = Dict(
+        "Simple archive" => (SINGLE_FILE => ZipStreams.LocalFileHeader(
+            ZipStreams.ZipFileInformation(
+                ZipStreams.COMPRESSION_DEFLATE,
+                length(FILE_BYTES),
+                length(DEFLATED_FILE_BYTES),
+                DateTime(2023, 1, 20, 0, 35, 14),
+                FILE_CONTENT_CRC,
+                "hello.txt",
+                false,
+                true,
+                false,
+            ))
+        ),
+        "Zip64 local header" => (ZIP64_F => ZipStreams.LocalFileHeader(
+            ZipStreams.ZipFileInformation(
+                ZipStreams.COMPRESSION_DEFLATE,
+                length(FILE_BYTES),
+                length(DEFLATED_FILE_BYTES),
+                DateTime(2022, 8, 18, 23, 21, 38),
+                FILE_CONTENT_CRC,
+                "hello.txt",
+                false,
+                false,
+                true,
+            ))
+        ),
+    )
     @testset "LocalFileHeader" begin
-        @testset "Empty archive" begin
-            open(EMPTY_FILE, "r") do f
-                skip(f, 4)
-                @test_throws ArgumentError read(f, ZipStreams.LocalFileHeader)
+        for (test_name, test) in expected_exceptions
+            @testset "$test_name" begin
+                test_file = test[1]
+                expected_exception = test[2]
+                open(test_file, "r") do f
+                    skip(f, 4)
+                    @test_throws expected_exception read(f, ZipStreams.LocalFileHeader)
+                end
             end
         end
 
-        @testset "Simple archive" begin
-            open(SINGLE_FILE, "r") do f
-                skip(f, 4)
-                @test_broken read(f, ZipStreams.LocalFileHeader).info == FILE_INFO
-            end
-        end
-
-        @testset "Zip64 local header" begin
-            open(ZIP64_F, "r") do f
-                skip(f, 4)
-                @test read(f, ZipStreams.LocalFileHeader).info == ZIP64_FILE_INFO
+        for (test_name, test) in expected_headers
+            @testset "$test_name" begin
+                test_file = test[1]
+                expected_header = test[2]
+                open(test_file, "r") do f
+                    skip(f, 4)
+                    @test read(f, ZipStreams.LocalFileHeader) == expected_header
+                end
             end
         end
     end
