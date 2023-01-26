@@ -327,7 +327,8 @@ end
                     zip_files(path, joinpath(tdir, filename))
                     zipsource(path) do source
                         f = next_file(source)
-                        @test f.info.name == basename(filename) # zip_files does not recreate the path within the ZIP archive
+                        expected_path = join([ZipStreams.strip_dots(relpath(tdir)), filename], ZipStreams.ZIP_PATH_DELIMITER)
+                        @test f.info.name == expected_path # zip_files _does_ recreate the path within the ZIP archive
                         @test read(f, String) == FILE_CONTENT
                     end
                 end
@@ -339,7 +340,8 @@ end
                     zip_files(path, joinpath.(Ref(tdir), filenames))
                     zipsource(path) do source
                         for (f, filename) in zip(source, filenames)
-                            @test f.info.name == basename(filename) # zip_files does not recreate the path within the ZIP archive
+                            expected_path = join([ZipStreams.strip_dots(relpath(tdir)), filename], ZipStreams.ZIP_PATH_DELIMITER)
+                            @test f.info.name == expected_path # zip_files _does_ recreate the path within the ZIP archive
                             @test read(f, String) == FILE_CONTENT
                         end
                     end
@@ -354,7 +356,8 @@ end
                         expected = filter(x -> !isdir(x) && length(split(x.name, ZipStreams.ZIP_PATH_DELIMITER)) == 1, MULTI_INFO)
                         zipsource(path) do archive
                             for (f, info) in zip(archive, expected)
-                                @test f.info.name == info.name
+                                expected_path = join([ZipStreams.strip_dots(relpath(tdir)), info.name], ZipStreams.ZIP_PATH_DELIMITER)
+                                @test f.info.name == expected_path
                                 @test read(f, String) == FILE_CONTENT
                             end
                         end
@@ -367,7 +370,8 @@ end
                         expected = filter(x -> !isdir(x) && length(split(x.name, ZipStreams.ZIP_PATH_DELIMITER)) == 1, MULTI_INFO)
                         zipsource(path) do archive
                             for (f, info) in zip(archive, expected)
-                                @test f.info.name == info.name
+                                expected_path = join([ZipStreams.strip_dots(relpath(tdir)), info.name], ZipStreams.ZIP_PATH_DELIMITER)
+                                @test f.info.name == expected_path
                                 @test read(f, String) == FILE_CONTENT
                             end
                         end
