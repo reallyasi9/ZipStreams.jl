@@ -25,9 +25,13 @@ function zip_files(archive_filename::AbstractString, input_filenames::AbstractVe
         for filename in input_filenames
             rpath = relpath(filename) # relative to . by default
             clean_path = strip_dots(rpath)
-            open(filename, "r") do io
-                open(sink, clean_path; make_path=true) do fsink
-                    write(fsink, io)
+            if isdir(filename)
+                mkpath(sink, clean_path)
+            else
+                open(filename, "r") do io
+                    open(sink, clean_path; make_path=true) do fsink
+                        write(fsink, io)
+                    end
                 end
             end
         end
