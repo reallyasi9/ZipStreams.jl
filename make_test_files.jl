@@ -14,37 +14,37 @@ const CONTENT_CRC32 = crc32(CONTENT)
 const CONTENT_DEFLATED = transcode(DeflateCompressor, CONTENT)
 
 # File name standard:
-# [09][dD][zZ][uU][cC][eE](-.*)?\.zip
-# 0/9: uses store/deflate for compression
-# d/D: uses local header/data descriptor for size and CRC information
-# z/Z: uses standard/Zip64 in local header for size
-# u/U: uses IBM/UTF-8 for file comment
-# c/C: uses standard/Zip64 in central directory entry
-# e/E: uses standard/Zip64 End of Central Directory (EOCD) record
+# (store|deflate)-(no)?dd-(no)?local64-(ibm|utf)-(no)?cd64-(no)?eocd64(-.*)?\.zip
+# store|deflate: uses store/deflate for compression
+# (no)?dd: uses local header/data descriptor for size and CRC information
+# (no)?local64: uses standard/Zip64 in local header for size
+# (ibm|utf): uses IBM/UTF-8 for file comment
+# (no)?cd64: uses standard/Zip64 in central directory entry
+# (no)?eocd64: uses standard/Zip64 End of Central Directory (EOCD) record
 # Everything following the hyphen is a comment for ease of understanding.
 const COMPRESSION_OPTIONS = [
-    '0' => 0x0000 % UInt16,
-    '9' => 0x0008 % UInt16,
+    "store" => 0x0000 % UInt16,
+    "deflate" => 0x0008 % UInt16,
 ]
 const DATA_DESCRIPTOR_OPTIONS = [
-    'd' => 0x0000 % UInt16,
-    'D' => 0x0008 % UInt16,
+    "nodd" => 0x0000 % UInt16,
+    "dd" => 0x0008 % UInt16,
 ]
 const LOCAL_ZIP64_OPTIONS = [
-    'z' => false,
-    'Z' => true,
+    "nolocal64" => false,
+    "local64" => true,
 ]
 const UTF8_OPTIONS = [
-    'u' => 0x0000 % UInt16,
-    'U' => 0x0800 % UInt16,
+    "ibm" => 0x0000 % UInt16,
+    "utf" => 0x0800 % UInt16,
 ]
 const CD_ZIP64_OPTIONS = [
-    'c' => false,
-    'C' => true,
+    "nocd64" => false,
+    "cd64" => true,
 ]
 const EOCD_ZIP64_OPTIONS = [
-    'e' => false,
-    'E' => true,
+    "noeocd64" => false,
+    "eocd64" => true,
 ]
 
 const LOCAL_HEADER = 0x04034b50 % UInt32
@@ -238,7 +238,7 @@ function write_eocd(io::IO, cd_start::Int, ez64::Bool)
 end
 
 for (compression, dd, lzip64, utf8, czip64, ezip64) in Iterators.product(COMPRESSION_OPTIONS, DATA_DESCRIPTOR_OPTIONS, LOCAL_ZIP64_OPTIONS, UTF8_OPTIONS, CD_ZIP64_OPTIONS, EOCD_ZIP64_OPTIONS)
-    archive_name = compression[1] * dd[1] * lzip64[1] * utf8[1] * czip64[1] * ezip64[1] * ".zip"
+    archive_name = join([compression[1], dd[1], lzip64[1], utf8[1], czip64[1], ezip64[1]], '-') * ".zip"
 
     open(archive_name, "w") do io
         write_local_header(io, compression[2], dd[2], lzip64[2], utf8[2])
