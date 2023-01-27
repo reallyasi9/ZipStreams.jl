@@ -1,4 +1,4 @@
-using CodecZlib, TranscodingStreams, StringEncodings, CRC32
+using CodecZlib, TranscodingStreams, CRC32
 
 # Bootstraps the creation of test ZIP files
 
