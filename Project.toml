@@ -1,0 +1,6 @@
+[deps]
+CRC32 = "b4567568-9dcc-467e-9b62-c342d3a501d3"
+CodecZlib = "944b1d66-785c-5afd-91f1-9de20f533193"
+StringEncodings = "69024149-9ee7-55f6-a4c4-859efe599b68"
+TranscodingStreams = "3bb67fe8-82b1-5028-8e26-92a6c54297fa"
+ZipStreams = "d1ba5cbe-eaf4-46e4-b1fe-0fd0bb93243b"
