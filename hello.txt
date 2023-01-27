@@ -1,1 +1,1 @@
-👋Hello, Julia!
+Hello, Julia!

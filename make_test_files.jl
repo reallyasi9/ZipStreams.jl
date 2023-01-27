@@ -58,7 +58,18 @@ const ZIP64_EOCD_HEADER = 0x06064b50 % UInt32
 const ZIP64_EOCDL_HEADER = 0x07064b50 % UInt32
 const EOCD_HEADER = 0x06054b50 % UInt32
 
-function write_local_header(io::IO, compress::UInt16, dd::UInt16, lz64::Bool, utf8::UInt16)
+function write_local_header(
+    io::IO,
+    compress::UInt16,
+    dd::UInt16,
+    lz64::Bool,
+    utf8::UInt16;
+    crc::UInt32=dd == 0 ? CONTENT_CRC32 : 0%UInt32,
+    usize::UInt32=dd != 0 ? 0%UInt32 : lz64 ? typemax(UInt32) : length(CONTENT)%UInt32,
+    csize::UInt32=dd != 0 ? 0%UInt32 : lz64 ? typemax(UInt32) : compress == 0 ? usize : length(CONTENT_DEFLATED)%UInt32,
+    filename::String=utf8 == 0 ? FILENAME : UNICODE_FILENAME,
+    )
+    
     write(io, htol(LOCAL_HEADER))
     write(io, htol(EX_VER))
     bit_flag = (dd | utf8) % UInt16
@@ -66,33 +77,11 @@ function write_local_header(io::IO, compress::UInt16, dd::UInt16, lz64::Bool, ut
     write(io, htol(compress))
     write(io, htol(EPOCH_TIME))
     write(io, htol(EPOCH_DATE))
-    if dd != 0
-        crc = 0 % UInt32
-        usize = 0 % UInt32
-        csize = 0 % UInt32
-    else
-        crc = CONTENT_CRC32
-        if lz64
-            usize = 0xffffffff % UInt32
-            csize = 0xffffffff % UInt32
-        else
-            usize = length(CONTENT) % UInt32
-            if compress != 0
-                csize = length(CONTENT_DEFLATED) % UInt32
-            else
-                csize = usize
-            end
-        end
-    end
     write(io, htol(crc))
     write(io, htol(csize))
     write(io, htol(usize))
-    if utf8 != 0
-        filename = codeunits(UNICODE_FILENAME)
-    else
-        filename = codeunits(FILENAME)
-    end
-    lfn = length(filename) % UInt16
+    cufn = codeunits(filename)
+    lfn = length(cufn) % UInt16
     write(io, htol(lfn))
     if lz64
         exlen = 20 % UInt16
@@ -100,7 +89,7 @@ function write_local_header(io::IO, compress::UInt16, dd::UInt16, lz64::Bool, ut
         exlen = 0 % UInt16
     end
     write(io, htol(exlen))
-    write(io, filename)
+    write(io, cufn)
     if lz64
         write(io, htol(ZIP64_HEADER))
         len = 16 % UInt16
@@ -110,15 +99,17 @@ function write_local_header(io::IO, compress::UInt16, dd::UInt16, lz64::Bool, ut
     end
 end
 
-function write_data_descriptor(io::IO, compress::UInt16, lz64::Bool)
+function write_data_descriptor(
+    io::IO,
+    compress::UInt16,
+    lz64::Bool; 
+    crc::UInt32=CONTENT_CRC32,
+    usize::UInt64=length(CONTENT)%UInt64,
+    csize::UInt64=compress == 0 ? usize : length(CONTENT_DEFLATED)%UInt64,
+    )
+
     write(io, htol(DATA_DESCRIPTOR_HEADER))
-    write(io, htol(CONTENT_CRC32))
-    usize = length(CONTENT)
-    if compress != 0
-        csize = length(CONTENT_DEFLATED)
-    else
-        csize = usize
-    end
+    write(io, htol(crc))
     if lz64
         write(io, csize % UInt64)
         write(io, usize % UInt64)
@@ -128,7 +119,20 @@ function write_data_descriptor(io::IO, compress::UInt16, lz64::Bool)
     end
 end
 
-function write_central_directory(io::IO, compress::UInt16, dd::UInt16, cz64::Bool, utf8::UInt16)
+function write_central_directory(
+    io::IO,
+    compress::UInt16,
+    dd::UInt16,
+    cz64::Bool,
+    utf8::UInt16;
+    crc::UInt32=dd == 0 ? CONTENT_CRC32 : 0%UInt32,
+    usize::UInt32=cz64 ? typemax(UInt32) : length(CONTENT)%UInt32,
+    csize::UInt32=cz64 ? typemax(UInt32) : compress == 0 ? usize%UInt32 : length(CONTENT_DEFLATED)%UInt32,
+    offset::UInt32=cz64 ? typemax(UInt32) : 0%UInt32,
+    filename::String=utf8 == 0 ? FILENAME : UNICODE_FILENAME,
+    comment::String=utf8 == 0 ? FILE_COMMENT : UNICODE_FILE_COMMENT,
+    )
+
     write(io, htol(CENTRAL_DIRECTORY_HEADER))
     write(io, htol(EX_VER))
     write(io, htol(EX_VER))
@@ -137,28 +141,11 @@ function write_central_directory(io::IO, compress::UInt16, dd::UInt16, cz64::Boo
     write(io, htol(compress))
     write(io, htol(EPOCH_TIME))
     write(io, htol(EPOCH_DATE))
-    write(io, htol(CONTENT_CRC32))
-    if cz64
-        usize = 0xffffffff % UInt32
-        csize = 0xffffffff % UInt32
-    else
-        usize = length(CONTENT) % UInt32
-        if compress != 0
-            csize = length(CONTENT_DEFLATED) % UInt32
-        else
-            csize = usize
-        end
-    end
+    write(io, htol(crc))
     write(io, htol(csize))
     write(io, htol(usize))
-    if utf8 != 0
-        filename = codeunits(UNICODE_FILENAME)
-        comment = codeunits(UNICODE_FILE_COMMENT)
-    else
-        filename = codeunits(FILENAME)
-        comment = codeunits(FILE_COMMENT)
-    end
-    lfn = length(filename) % UInt16
+    cufn = codeunits(filename)
+    lfn = length(cufn) % UInt16
     write(io, htol(lfn))
     if cz64
         exlen = 32 % UInt16
@@ -171,31 +158,24 @@ function write_central_directory(io::IO, compress::UInt16, dd::UInt16, cz64::Boo
     write(io, 0 % UInt16)
     write(io, 0 % UInt16)
     write(io, 0 % UInt32)
-    if cz64
-        write(io, 0xffffffff % UInt32)
-    else
-        write(io, 0 % UInt32)
-    end
-    write(io, filename)
+    write(io, htol(offset))
+    write(io, cufn)
     if cz64
         write(io, htol(ZIP64_HEADER))
         len = 28 % UInt16
         write(io, htol(len))
-        xusize = length(CONTENT) % UInt64
-        if compress != 0
-            xcsize = length(CONTENT_DEFLATED) % UInt64
-        else
-            xcsize = xusize
-        end
+        xusize = usize % UInt64
+        xcsize = csize % UInt64
+        xoffset = offset % UInt64
         write(io, htol(xusize))
         write(io, htol(xcsize))
-        write(io, 0 % UInt64)
+        write(io, htol(xoffset))
         write(io, 0 % UInt32)
     end
     write(io, comment)
 end
 
-function write_eocd(io::IO, cd_start::Int, ez64::Bool)
+function write_eocd(io::IO, cd_start::Int, ez64::Bool; number_of_entries::UInt64=1%UInt64)
     eocd_loc = position(io) % UInt64
     if ez64
         write(io, htol(ZIP64_EOCD_HEADER))
@@ -204,8 +184,8 @@ function write_eocd(io::IO, cd_start::Int, ez64::Bool)
         write(io, htol(EX_VER))
         write(io, 0 % UInt32)
         write(io, 0 % UInt32)
-        write(io, htol(1 % UInt64))
-        write(io, htol(1 % UInt64))
+        write(io, htol(number_of_entries % UInt64))
+        write(io, htol(number_of_entries % UInt64))
         write(io, htol((eocd_loc - cd_start % UInt64) % UInt64))
         write(io, htol(cd_start % UInt64))
 
@@ -225,8 +205,8 @@ function write_eocd(io::IO, cd_start::Int, ez64::Bool)
         write(io, htol(EOCD_HEADER))
         write(io, 0 % UInt16)
         write(io, 0 % UInt16)
-        write(io, htol(1 % UInt16))
-        write(io, htol(1 % UInt16))
+        write(io, htol(number_of_entries % UInt16))
+        write(io, htol(number_of_entries % UInt16))
         write(io, htol((eocd_loc - cd_start % UInt32) % UInt32))
         write(io, htol(cd_start % UInt32))
     end
@@ -257,5 +237,53 @@ for (compression, dd, lzip64, utf8, czip64, ezip64) in Iterators.product(COMPRES
         write_central_directory(io, compression[2], dd[2], czip64[2], utf8[2])
 
         write_eocd(io, cd_start, ezip64[2])
+    end
+end
+
+# Multi-file with subdirectory
+for (compression, dd) in Iterators.product(COMPRESSION_OPTIONS, DATA_DESCRIPTOR_OPTIONS)
+    archive_name = join([compression[1], dd[1]], '-') * "-nolocal64-ibm-nocd64-noeocd64-multi.zip"
+
+    open(archive_name, "w") do io
+        # hello.txt
+        offsets = zeros(UInt32, 3)
+        offsets[1] = position(io)
+        write_local_header(io, compression[2], dd[2], false, 0x0000)
+
+        if compression[2] != 0
+            write(io, CONTENT_DEFLATED)
+        else
+            write(io, CONTENT)
+        end
+
+        if dd[2] != 0
+            write_data_descriptor(io, compression[2], false)
+        end
+
+        # subdir/
+        offsets[2] = position(io)
+        write_local_header(io, 0x0000, 0x0000, false, 0x0000; crc=0x00000000, usize=0x00000000, filename=DIRNAME * "/")
+
+        # subdir/hello.txt
+        offsets[3] = position(io)
+        write_local_header(io, compression[2], dd[2], false, 0x0000; filename=join([DIRNAME, FILENAME], '/'))
+
+        if compression[2] != 0
+            write(io, CONTENT_DEFLATED)
+        else
+            write(io, CONTENT)
+        end
+
+        if dd[2] != 0
+            write_data_descriptor(io, compression[2], false)
+        end
+
+        # central directory
+        cd_start = position(io)
+        write_central_directory(io, compression[2], dd[2], false, 0x0000; offset=offsets[1])
+        write_central_directory(io, 0x0000, 0x0000, false, 0x0000; crc=0x00000000, usize=0x00000000, filename=DIRNAME * "/", offset=offsets[2])
+        write_central_directory(io, compression[2], dd[2], false, 0x0000; filename=join([DIRNAME, FILENAME], '/'), offset=offsets[3])
+
+        write_eocd(io, cd_start, false; number_of_entries=2%UInt64)
     end
 end
