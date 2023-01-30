@@ -114,8 +114,8 @@ function Base.close(
     end
     flush(zipfile)
     crc = crc32(zipfile.sink)
-    c_size = bytes_out(zipfile)
-    uc_size = bytes_in(zipfile)
+    c_size = bytes_in(zipfile)
+    uc_size = bytes_out(zipfile)
     # FIXME: Not atomic!
     # NOTE: not standard per se, but more common than not to use a signature here.
     if zipfile.info.descriptor_follows
