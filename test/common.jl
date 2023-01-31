@@ -82,6 +82,32 @@ function test_file_name(deflate::Bool, dd::Bool, local64::Bool, utf8::Bool, cd64
     return joinpath(ARTIFACT_DIR, filename)
 end
 
+function test_file_info(deflate::Bool, dd::Bool, zip64::Bool, utf8::Bool, subdir::String="")
+    compression_method = deflate ? ZipStreams.COMPRESSION_DEFLATE : ZipStreams.COMPRESSION_STORE
+    uncompressed_size = length(FILE_BYTES)
+    compressed_size = deflate ? length(DEFLATED_FILE_BYTES) : uncompressed_size
+    last_modified = DateTime(1980, 1, 1, 0, 0, 0)
+    crc32 = FILE_CONTENT_CRC
+    extrafield_length = zip64 ? 20 : 0
+    filename = utf8 ? "👋hello.txt" : "hello.txt"
+    if !isempty(subdir)
+        filename = subdir * ZipStreams.ZIP_PATH_DELIMITER * filename
+    end
+    descriptor_follows = dd
+    return ZipStreams.ZipFileInformation(
+        compression_method,
+        uncompressed_size,
+        compressed_size,
+        last_modified,
+        crc32,
+        extrafield_length,
+        filename,
+        descriptor_follows,
+        utf8,
+        zip64,
+    )
+end
+
 # Special files
 const EMPTY_FILE = joinpath(ARTIFACT_DIR, "noeocd64-empty.zip")
 const EMPTY_FILE_EOCD64 = joinpath(ARTIFACT_DIR, "eocd64-empty.zip")

@@ -103,67 +103,93 @@ end
 @testset "Archive iteration" begin
     @testset "next_file" begin
         @testset "Empty archive" begin
-            archive = zipsource(EMPTY_FILE)
-            f = next_file(archive)
-            @test isnothing(f)
-            close(archive)
+            for fn in (EMPTY_FILE, EMPTY_FILE_EOCD64)
+                @testset "$fn" begin
+                    zipsource(EMPTY_FILE) do archive
+                        f = next_file(archive)
+                        @test isnothing(f)
+                    end
+                end
+            end
         end
 
         @testset "Simple archive" begin
-            archive = zipsource(SINGLE_FILE)
-            f = next_file(archive)
-            @test !isnothing(f)
-            @test_broken f.info == FILE_INFO
-            f = next_file(archive)
-            @test isnothing(f)
-            close(archive)
+            for (deflate, dd, local64, utf8, cd64, eocd64) in Iterators.product(false:true, false:true, false:true, false:true, false:true, false:true)
+                archive_name = test_file_name(deflate, dd, local64, utf8, cd64, eocd64)
+                file_info = test_file_info(deflate, dd, local64, utf8)
+                @testset "$archive_name" begin
+                    zipsource(archive_name) do archive
+                        f = next_file(archive)
+                        @test !isnothing(f)
+                        @test f.info == file_info
+                        f = next_file(archive)
+                        @test isnothing(f)
+                    end
+                end
+            end
         end
 
         @testset "Multi archive" begin
-            archive = zipsource(MULTI_FILE)
-            for info in MULTI_INFO
-                if isdir(info)
-                    continue
+            multi_file = test_file_name(true, true, false, false, false, false, "multi")
+            first_file_info = test_file_info(true, true, false, false)
+            second_file_info = test_file_info(true, true, false, false, "subdir")
+            @testset "$multi_file" begin
+                zipsource(multi_file) do archive
+                    f = next_file(archive)
+                    @test !isnothing(f)
+                    @test f.info == first_file_info
+                    f = next_file(archive)
+                    @test !isnothing(f)
+                    @test f.info == second_file_info
+                    @test isnothing(next_file(archive))
                 end
-                f = next_file(archive)
-                @test !isnothing(f)
-                @test f.info == info
             end
-            f = next_file(archive)
-            @test isnothing(f)
-            close(archive)
         end
     end
 
     @testset "iterator" begin
         @testset "Empty archive" begin
-            archive = zipsource(EMPTY_FILE)
-            for f in archive
-                @test false
+            for fn in (EMPTY_FILE, EMPTY_FILE_EOCD64)
+                @testset "$fn" begin
+                    zipsource(EMPTY_FILE) do archive
+                        for f in archive
+                            @test false # must not happen
+                        end
+                        @test isnothing(next_file(archive))
+                    end
+                end
             end
-            close(archive)
         end
 
         @testset "Simple archive" begin
-            archive = zipsource(SINGLE_FILE)
-            for f in archive
-                @test !isnothing(f)
-                @test_broken f.info == FILE_INFO
+            for (deflate, dd, local64, utf8, cd64, eocd64) in Iterators.product(false:true, false:true, false:true, false:true, false:true, false:true)
+                archive_name = test_file_name(deflate, dd, local64, utf8, cd64, eocd64)
+                file_info = test_file_info(deflate, dd, local64, utf8)
+                @testset "$archive_name" begin
+                    zipsource(archive_name) do archive
+                        for f in archive
+                            f.info == file_info
+                        end
+                        @test isnothing(next_file(archive))
+                    end
+                end
             end
-            f = next_file(archive)
-            @test isnothing(f)
-            close(archive)
         end
 
         @testset "Multi archive" begin
-            archive = zipsource(MULTI_FILE)
-            for (f, info) in zip(archive, filter(x -> !isdir(x), MULTI_INFO))
-                @test !isnothing(f)
-                @test f.info == info
+            multi_file = test_file_name(true, true, false, false, false, false, "multi")
+            file_infos = [
+                test_file_info(true, true, false, false),
+                test_file_info(true, true, false, false, "subdir"),
+            ]
+            @testset "$multi_file" begin
+                zipsource(multi_file) do archive
+                    for (i,f) in zip(file_infos, archive)
+                        @test f.info == i
+                    end
+                    @test isnothing(next_file(archive))
+                end
             end
-            f = next_file(archive)
-            @test isnothing(f)
-            close(archive)
         end
     end
 end
