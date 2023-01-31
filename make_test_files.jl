@@ -73,8 +73,8 @@ function write_local_header(
     lz64::Bool,
     utf8::Integer;
     crc::UInt32=dd == NO_DD ? CONTENT_CRC32 : 0%UInt32,
-    usize::Integer=dd == DD ? 0 : lz64 ? typemax(UInt32) : length(CONTENT),
-    csize::Integer=dd == DD ? 0 : lz64 ? typemax(UInt32) : compress == 0 ? usize : length(CONTENT_DEFLATED),
+    usize::Integer=length(CONTENT),
+    csize::Integer=compress == STORE ? usize : length(CONTENT_DEFLATED),
     filename::String=utf8 == IBM_ENC ? FILENAME : UNICODE_FILENAME,
     )
     
@@ -86,8 +86,10 @@ function write_local_header(
     write(io, htol(EPOCH_TIME))
     write(io, htol(EPOCH_DATE))
     write(io, htol(crc))
-    write(io, htol(csize%UInt32))
-    write(io, htol(usize%UInt32))
+    short_csize = lz64 ? typemax(UInt32) : csize%UInt32
+    short_usize = lz64 ? typemax(UInt32) : usize%UInt32
+    write(io, htol(short_csize))
+    write(io, htol(short_usize))
     cufn = codeunits(filename)
     lfn = length(cufn) % UInt16
     write(io, htol(lfn))
@@ -102,8 +104,10 @@ function write_local_header(
         write(io, htol(ZIP64_HEADER))
         len = 16 % UInt16
         write(io, htol(len))
-        write(io, htol(usize % UInt64))
-        write(io, htol(csize % UInt64))
+        long_usize = dd == DD ? 0%UInt64 : usize%UInt64
+        long_csize = dd == DD ? 0%UInt64 : csize%UInt64
+        write(io, htol(long_usize))
+        write(io, htol(long_csize))
     end
 end
 
@@ -113,7 +117,7 @@ function write_data_descriptor(
     lz64::Bool; 
     crc::UInt32=CONTENT_CRC32,
     usize::Integer=length(CONTENT),
-    csize::Integer=compress == 0 ? usize : length(CONTENT_DEFLATED),
+    csize::Integer=compress == STORE ? usize : length(CONTENT_DEFLATED),
     )
 
     write(io, htol(DATA_DESCRIPTOR_HEADER))
@@ -134,9 +138,9 @@ function write_central_directory(
     cz64::Bool,
     utf8::Integer;
     crc::UInt32=CONTENT_CRC32,
-    usize::Integer=cz64 ? typemax(UInt32) : length(CONTENT),
-    csize::Integer=cz64 ? typemax(UInt32) : compress == STORE ? usize : length(CONTENT_DEFLATED),
-    offset::Integer=cz64 ? typemax(UInt32) : 0,
+    usize::Integer=length(CONTENT),
+    csize::Integer=compress == STORE ? usize : length(CONTENT_DEFLATED),
+    offset::Integer=0,
     filename::String=utf8 == IBM_ENC ? FILENAME : UNICODE_FILENAME,
     comment::String=utf8 == IBM_ENC ? FILE_COMMENT : UNICODE_FILE_COMMENT,
     )
@@ -150,8 +154,10 @@ function write_central_directory(
     write(io, htol(EPOCH_TIME))
     write(io, htol(EPOCH_DATE))
     write(io, htol(crc))
-    write(io, htol(csize % UInt32))
-    write(io, htol(usize % UInt32))
+    short_csize = cz64 ? typemax(UInt32) : csize%UInt32
+    short_usize = cz64 ? typemax(UInt32) : usize%UInt32
+    write(io, htol(short_csize))
+    write(io, htol(short_usize))
     cufn = codeunits(filename)
     lfn = length(cufn) % UInt16
     write(io, htol(lfn))
@@ -166,7 +172,8 @@ function write_central_directory(
     write(io, 0 % UInt16)
     write(io, 0 % UInt16)
     write(io, 0 % UInt32)
-    write(io, htol(offset % UInt32))
+    short_offset = cz64 ? typemax(UInt32) : offset%UInt32
+    write(io, htol(short_offset))
     write(io, cufn)
     if cz64
         write(io, htol(ZIP64_HEADER))
@@ -183,7 +190,13 @@ function write_central_directory(
     write(io, comment)
 end
 
-function write_eocd(io::IO, cd_start::Integer, ez64::Bool; number_of_entries::Integer=1, comment::String=ARCHIVE_COMMENT)
+function write_eocd(
+    io::IO,
+    cd_start::Integer,
+    ez64::Bool;
+    number_of_entries::Integer=1,
+    comment::String=ARCHIVE_COMMENT
+    )
     eocd_loc = position(io) % UInt64
     if ez64
         write(io, htol(ZIP64_EOCD_HEADER))
