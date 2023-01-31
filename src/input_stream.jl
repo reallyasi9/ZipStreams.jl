@@ -42,7 +42,8 @@ function zipfilesource(info::ZipFileInformation, io::IO)
         if info.compressed_size != 0
             @warn "Data descriptor signalled in local file header, but size information present as well: data descriptor will be used, but extracted data may be corrupt" info.compressed_size
         end
-        limiter = SentinelLimiter(htol(bytearray(SIG_DATA_DESCRIPTOR)))
+        T = info.zip64 ? UInt64 : UInt32
+        limiter = SentinelLimiter(T, htol(bytearray(SIG_DATA_DESCRIPTOR)))
     else
         limiter = FixedSizeLimiter(info.compressed_size)
     end

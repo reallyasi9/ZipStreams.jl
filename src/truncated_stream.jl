@@ -68,6 +68,9 @@ end
 
 A limiter that signals the number of bytes until a sentinel is found.
 
+The type `T` is the type of the bytes recorded in the sentinel. It ought to be UInt64 for
+Zip64-formatted files and UInt32 otherwise.
+
 This is useful for reading ZIP files that use a data descriptor at the end. Will first
 report a number of bytes before a sentinel so that data can be read up to the sentinel, but
 if the first bytes are the start of a sentinel block, will check if the sentinel is valid
@@ -78,7 +81,7 @@ must support the operations `mark(::IO)` and `reset(::IO)` (i.e., it must be see
 usually means it is buffered). Checking for the sentinel relies on `readbytes!(::IO, ::Int)`,
 which has a default (slow) definition for generic `IO`.
 """
-mutable struct SentinelLimiter <: AbstractLimiter
+mutable struct SentinelLimiter{T<:Integer} <: AbstractLimiter
     sentinel::Vector{UInt8}
     failure_function::Vector{Int}
     crc32::UInt32
@@ -86,7 +89,7 @@ mutable struct SentinelLimiter <: AbstractLimiter
     # TODO: deal with uncompressed bytes somehow?
 end
 
-function SentinelLimiter(sentinel::AbstractVector{UInt8})
+function SentinelLimiter(typ::Type{T}, sentinel::AbstractVector{UInt8}) where {T<:Integer}
     # Implements Knuth-Morris-Pratt failure function computation
     # https://en.wikipedia.org/wiki/Knuth%E2%80%93Morris%E2%80%93Pratt_algorithm
     s = copy(sentinel)
@@ -109,7 +112,7 @@ function SentinelLimiter(sentinel::AbstractVector{UInt8})
     end
     t[pos] = cnd
 
-    return SentinelLimiter(s, t, CRC32_INIT, 0)
+    return SentinelLimiter{typ}(s, t, CRC32_INIT, 0)
 end
 
 """
@@ -163,7 +166,7 @@ function peekbytes!(io::IO, a::Vector{UInt8})
     return n
 end
 
-function bytes_remaining(limiter::SentinelLimiter, io::IO)
+function bytes_remaining(limiter::SentinelLimiter{T}, io::IO) where {T<:Integer}
     slen = length(limiter.sentinel)
     buflen = max(slen, bytesavailable(io))
     buffer = Vector{UInt8}(undef, buflen)
@@ -181,17 +184,21 @@ function bytes_remaining(limiter::SentinelLimiter, io::IO)
     end
     # the sentinel is at position 1
     # check to see if the descriptor matches the stats block
-    if nb < slen + 20 # 4 CRC bytes, 16 size bytes
+    if nb < slen + 4 + 2*sizeof(T) # 4 CRC bytes, 8 or 16 size bytes
         return -1 # the input was too short to make a determination, so ask for more data
     end
     if bytesle2int(UInt32, buffer[slen+1:slen+4]) != limiter.crc32
         return 1 # the sentinel was fake, so we can consume 1 byte and move on
     end
     # TODO: figure out how to handle compressed bytes read from a stream...
-    # if bytesle2int(UInt32, buffer[slen+5:slen+12]) != bytes_out(stream)
+    bytes_from = slen+5
+    bytes_to = bytes_from+sizeof(T)-1
+    # if bytesle2int(T, buffer[bytes_from:bytes_to]) != bytes_out(stream)
     #     return 1
     # end
-    if bytesle2int(UInt32, buffer[slen+13:slen+20]) != limiter.bytes_consumed
+    bytes_from = bytes_to+1
+    bytes_to = bytes_from+sizeof(T)-1
+    if bytesle2int(T, buffer[bytes_from:bytes_to]) != limiter.bytes_consumed
         return 1
     end
 

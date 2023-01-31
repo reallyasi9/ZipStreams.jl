@@ -41,7 +41,7 @@ import ZipStreams: zipsource, validate, next_file
     @testset "Pathological single" begin
         pathological_dd_file = test_file_name(false, true, false, false, false, false, "pathological-dd")
         zipsource(pathological_dd_file) do source
-            @test_throws EOFError validate(source)
+            @test validate(source) == [file_content]
         end
     end
     @testset "Single file partial read" begin
