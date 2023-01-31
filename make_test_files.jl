@@ -73,8 +73,8 @@ function write_local_header(
     lz64::Bool,
     utf8::Integer;
     crc::UInt32=dd == NO_DD ? CONTENT_CRC32 : 0%UInt32,
-    usize::Integer=length(CONTENT),
-    csize::Integer=compress == STORE ? usize : length(CONTENT_DEFLATED),
+    usize::Integer=dd == NO_DD ? length(CONTENT) : 0%UInt32,
+    csize::Integer=dd == DD ? 0%UInt32 : compress == STORE ? usize : length(CONTENT_DEFLATED),
     filename::String=utf8 == IBM_ENC ? FILENAME : UNICODE_FILENAME,
     )
     
@@ -104,8 +104,8 @@ function write_local_header(
         write(io, htol(ZIP64_HEADER))
         len = 16 % UInt16
         write(io, htol(len))
-        long_usize = dd == DD ? 0%UInt64 : usize%UInt64
-        long_csize = dd == DD ? 0%UInt64 : csize%UInt64
+        long_usize = usize%UInt64
+        long_csize = csize%UInt64
         write(io, htol(long_usize))
         write(io, htol(long_csize))
     end
