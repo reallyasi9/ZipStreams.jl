@@ -83,8 +83,10 @@ function validate(zf::ZipFileSource)
     if !eof(zf)
         throw("expected EOF not reached")
     end
-    badcom = bytes_in(zf) != zf.info.compressed_size
-    badunc = bytes_out(zf) != zf.info.uncompressed_size
+    # FIXME The limiter checks if the Data Descriptor's compressed size is valid for what
+    # has been read, but the uncompressed size cannot (yet) be checked on compressed files.
+    badcom = !zf.info.descriptor_follows && bytes_in(zf) != zf.info.compressed_size
+    badunc = !zf.info.descriptor_follows && bytes_out(zf) != zf.info.uncompressed_size
 
     if badcom
         @error "Compressed size check failed: expected $(zf.info.compressed_size), got $(bytes_in(zf))"

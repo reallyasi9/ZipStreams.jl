@@ -2,10 +2,23 @@ import ZipStreams: zipsource, validate, next_file
 
 @testset "validate" begin
     file_content = collect(b"Hello, Julia!\n")
-    @testset "Single file" begin
-        single_file = test_file_name(true, true, true, true, true, true)
-        zipsource(single_file) do source
-            @test validate(source) == [file_content]
+    # every combination of test_file_name should validate properly and return file_content
+    @testset "Complete archive" begin
+        for (deflate, dd, local64, utf8, cd64, eocd64) in Iterators.product(false:true, false:true, false:true, false:true, false:true, false:true)
+            archive_name = test_file_name(deflate, dd, local64, utf8, cd64, eocd64)
+            @testset "$archive_name" begin
+                zipsource(archive_name) do source
+                    @test validate(source) == [file_content]
+                end
+            end
+        end
+        for dd in false:true
+            archive_name = test_file_name(true, dd, false, false, false, false, "multi")
+            @testset "$archive_name" begin
+                zipsource(archive_name) do source
+                    @test validate(source) == [file_content, file_content]
+                end
+            end
         end
     end
     @testset "Multi file" begin
@@ -28,7 +41,7 @@ import ZipStreams: zipsource, validate, next_file
     @testset "Pathological single" begin
         pathological_dd_file = test_file_name(false, true, false, false, false, false, "pathological-dd")
         zipsource(pathological_dd_file) do source
-            @test_throws ErrorException validate(source)
+            @test_throws EOFError validate(source)
         end
     end
     @testset "Single file partial read" begin
