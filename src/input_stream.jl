@@ -15,6 +15,13 @@ mutable struct ZipFileSource{S<:TranscodingStream} <: IO
     source::S
 end
 
+# Expected size of the entire file, header and data descriptor included, in bytes
+function Base.sizeof(zf::ZipFileSource)
+    extra = !zf.info.descriptor_follows ? 0 : zf.info.zip64 ? 24 : 16
+    return sizeof(zf.info) + zf.info.compressed_size + extra
+end
+
+# TODO: make data descriptor files a little prettier than 0/0 bytes expected
 function Base.show(io::IO, zf::ZipFileSource)
     fname = zf.info.name
     csize = zf.info.compressed_size
@@ -73,6 +80,9 @@ the archive as a `Vector{UInt8}`.
 function validate(zf::ZipFileSource)
     # read the remainder of the file
     data = read(zf)
+    if !eof(zf)
+        throw("expected EOF not reached")
+    end
     badcom = bytes_in(zf) != zf.info.compressed_size
     badunc = bytes_out(zf) != zf.info.uncompressed_size
 
@@ -85,6 +95,8 @@ function validate(zf::ZipFileSource)
     if !badunc && length(data) < zf.info.uncompressed_size
         @warn "Unable to check CRC-32: data already read from stream"
         badcrc = false
+    elseif zf.info.descriptor_follows
+        badcrc = false # we literally cannot be here if the CRC check in the data descriptor did not work
     else
         badcrc = crc32(data) != zf.info.crc32
     end
@@ -314,8 +326,8 @@ function validate(zs::ZipArchiveSource)
     for (i, lf_info) in enumerate(zs.directory)
         ncd += 1
         cd_info = read(zs.source, CentralDirectoryHeader)
-        if cd_info.info != lf_info
-            error("discrepancy detected in central directory entry $i: expected $lf_info, got $cd_info")
+        if !_is_consistent(cd_info, lf_info)
+            error("discrepancy detected in central directory entry $i: expected $lf_info, got $(cd_info.info)")
         end
         if cd_info.offset != zs.offsets[i]
             error("discrepancy detected in central directory offset $i: expected $(zs.offsets[i]), got $(cd_info.offset)")

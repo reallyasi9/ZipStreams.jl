@@ -65,25 +65,23 @@ const EMPTY_CRC = UInt32(0)
 const ZERO_CRC = UInt32(0xD202EF8D)
 const FILE_CONTENT_CRC = UInt32(0xFE69594D)
 
-# Simple tests
+# build test file names
 const ARTIFACT_DIR = artifact"testfiles"
-const EMPTY_FILE = joinpath(ARTIFACT_DIR, "empty.zip")
-const SINGLE_FILE = joinpath(ARTIFACT_DIR, "single.zip")
-const MULTI_FILE = joinpath(ARTIFACT_DIR, "multi.zip")
-const RECURSIVE_FILE = joinpath(ARTIFACT_DIR, "zip.zip")
+function test_file_name(deflate::Bool, dd::Bool, local64::Bool, utf8::Bool, cd64::Bool, eocd64::Bool, extra::String="")
+    s1 = deflate ? "deflate" : "store"
+    s2 = dd ? "dd" : "nodd"
+    s3 = local64 ? "local64" : "nolocal64"
+    s4 = utf8 ? "utf" : "ibm"
+    s5 = cd64 ? "cd64" : "nocd64"
+    s6 = eocd64 ? "eocd64" : "noeocd64"
+    arr = [s1, s2, s3, s4, s5, s6]
+    if !isempty(extra)
+        push!(arr, extra)
+    end
+    filename = join(arr, "-") * ".zip"
+    return joinpath(ARTIFACT_DIR, filename)
+end
 
-# Zip64 format tests
-const ZIP64_F = joinpath(ARTIFACT_DIR, "single-f64.zip")
-const ZIP64_FC = joinpath(ARTIFACT_DIR, "single-f64-cd64.zip")
-const ZIP64_FE = joinpath(ARTIFACT_DIR, "single-f64-eocd64.zip")
-const ZIP64_FCE = joinpath(ARTIFACT_DIR, "single-f64-cd64-eocd64.zip")
-const ZIP64_C = joinpath(ARTIFACT_DIR, "single-cd64.zip")
-const ZIP64_E = joinpath(ARTIFACT_DIR, "single-cd64-eocd64.zip")
-const ZIP64_CE = joinpath(ARTIFACT_DIR, "single-eocd64.zip")
-
-# Data descriptor tests
-const SINGLE_DD_FILE = joinpath(ARTIFACT_DIR, "single-dd.zip")
-const MULTI_DD_FILE = joinpath(ARTIFACT_DIR, "multi-dd.zip")
-
-# Pathological tests
-const PATHOLOGICAL_DD_FILE = joinpath(ARTIFACT_DIR, "single-dd-pathological.zip")
+# Special files
+const EMPTY_FILE = joinpath(ARTIFACT_DIR, "noeocd64-empty.zip")
+const EMPTY_FILE_EOCD64 = joinpath(ARTIFACT_DIR, "eocd64-empty.zip")

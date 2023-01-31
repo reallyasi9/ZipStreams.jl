@@ -42,6 +42,7 @@ struct ZipFileInformation
     compressed_size::UInt64
     last_modified::DateTime
     crc32::UInt32
+    extra_field_size::UInt16
 
     name::String
 
@@ -51,7 +52,7 @@ struct ZipFileInformation
 end
 
 function Base.isdir(info::ZipFileInformation)
-    return endswith(info.name, ZIP_PATH_DELIMITER)
+    return info.compressed_size == 0 && info.uncompressed_size == 0 && endswith(info.name, ZIP_PATH_DELIMITER)
 end
 
 """
@@ -64,6 +65,11 @@ See: 4.3.7 of https://pkware.cachefly.net/webdocs/casestudies/APPNOTE.TXT
 """
 struct LocalFileHeader
     info::ZipFileInformation
+end
+
+# Expected size of the header in bytes
+function Base.sizeof(header::LocalFileHeader)
+    return 30 + sizeof(header.info.name) + header.info.extra_field_size
 end
 
 function _read_version_needed(io::IO)
@@ -133,17 +139,14 @@ function Base.read(io::IO, ::Type{LocalFileHeader})
 
         # MUST include BOTH original and compressed file size fields in local header per 4.5.3.
         # Can have any number of fields in central directory, but MUST be in the same fixed order.
-        # MUST have 0xffffffff for sizes in original record per 4.5.3.
+        # The standard suggests the the uncompressed and compressed sizes SHOULD be 0xffffffff
+        # if Zip64 is used, but don't have to be. For now, treat this as a warning.
         if uncompressed_size != typemax(UInt32)
-            error(
-                "Zip64-encoded file does not signal uncompressed size: expected $(typemax(UInt32)), got $(uncompressed_size)",
-            )
+            @warn "Zip64-encoded file does not signal uncompressed size: expected $(typemax(UInt32)), got $(uncompressed_size)"
         end
         uncompressed_size = readle(io, UInt64)
         if compressed_size != typemax(UInt32)
-            error(
-                "Zip64-encoded file does not signal compressed size: expected $(typemax(UInt32)), got $(compressed_size)",
-            )
+            @warn "Zip64-encoded file does not signal compressed size: expected $(typemax(UInt32)), got $(compressed_size)"
         end
         compressed_size = readle(io, UInt64)
 
@@ -159,12 +162,32 @@ function Base.read(io::IO, ::Type{LocalFileHeader})
         skip(io, extrafield_length - extra_read)
     end
 
+    # If data descriptor is signaled, the fields crc-32, compressed size, and uncompressed
+    # size are set to zero in the local header per 4.4.4. However, it appears that all
+    # known implementations override 4.4.4 by setting file sizes to 0xffffffff if the file
+    # is in ZIP64 format.
+    # Warn if data descriptor is signaled but these values appear wrong.
+    if descriptor_follows
+        if crc32 != CRC32_INIT
+            @warn "File using data descriptor does not signal CRC-32: expected $(string(CRC32_INIT; base=16)), got $(string(crc32; base=16))"
+        end
+        if !zip64
+            if uncompressed_size != 0%UInt32
+                @warn "File using data descriptor does not signal uncompressed size: expected $(string(0%UInt32; base=16)), got $(string(uncompressed_size; base=16))"
+            end
+            if compressed_size != 0%UInt32
+                @warn "File using data descriptor does not signal CRC-32: expected $(string(0%UInt32; base=16)), got $(string(compressed_size; base=16))"
+            end
+        end # zip64==true case caught above
+    end
+
     info = ZipFileInformation(
         compression_method,
         uncompressed_size,
         compressed_size,
         last_modified,
         crc32,
+        extrafield_length,
         filename,
         descriptor_follows,
         utf8,
@@ -319,9 +342,6 @@ function Base.read(io::IO, ::Type{CentralDirectoryHeader})
     flags = _read_general_purpose_flags(io)
     utf8 = (flags & FLAG_LANGUAGE_ENCODING) != 0
     descriptor_follows = (flags & FLAG_FILE_SIZE_FOLLOWS) != 0
-    if descriptor_follows
-        error("file size signature not allowed to follow central directory record")
-    end
     compression_method = _read_compression_method(io)
     last_modified = _read_last_modified(io)
     crc32 = readle(io, UInt32)
@@ -413,6 +433,7 @@ function Base.read(io::IO, ::Type{CentralDirectoryHeader})
         compressed_size,
         last_modified,
         crc32,
+        extrafield_length,
         filename,
         descriptor_follows,
         utf8,
@@ -538,6 +559,24 @@ function Base.write(
     nb += writele(io, comment_encoded)
 
     return nb
+end
+
+# Check if a CentralDirectoryHeader is consistent with a given LocalFileHeader's info
+function _is_consistent(cd::CentralDirectoryHeader, info::ZipFileInformation)
+    # some fields have to always match
+    info.compression_method == cd.info.compression_method || return false
+    info.last_modified == cd.info.last_modified || return false
+    info.name == cd.info.name || return false
+    info.descriptor_follows == cd.info.descriptor_follows || return false
+    info.utf8 == cd.info.utf8 || return false
+    # some fields are dependent on the data descriptor flag
+    if !info.descriptor_follows
+        info.uncompressed_size == cd.info.uncompressed_size || return false
+        info.compressed_size == cd.info.compressed_size || return false
+        info.crc32 == cd.info.crc32 || return false
+    end
+    # other fields don't matter
+    return true
 end
 
 function _write_zip64_eocd_record(io::IO, entries::UInt64, nbytes::UInt64, offset::UInt64)

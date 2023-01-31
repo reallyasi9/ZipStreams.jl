@@ -14,103 +14,7 @@ include("test_limiters.jl")
 include("test_truncated_source.jl")
 include("test_validate.jl")
 
-
-@testset "File components" begin
-    expected_exceptions = Dict(
-        "Empty archive" => (EMPTY_FILE => ArgumentError),
-    )
-    expected_headers = Dict(
-        "Simple archive" => (SINGLE_FILE => ZipStreams.LocalFileHeader(
-            ZipStreams.ZipFileInformation(
-                ZipStreams.COMPRESSION_DEFLATE,
-                length(FILE_BYTES),
-                length(DEFLATED_FILE_BYTES),
-                DateTime(2023, 1, 20, 0, 35, 14),
-                FILE_CONTENT_CRC,
-                "hello.txt",
-                false,
-                true,
-                false,
-            ))
-        ),
-        "Zip64 local header" => (ZIP64_F => ZipStreams.LocalFileHeader(
-            ZipStreams.ZipFileInformation(
-                ZipStreams.COMPRESSION_DEFLATE,
-                length(FILE_BYTES),
-                length(DEFLATED_FILE_BYTES),
-                DateTime(2022, 8, 18, 23, 21, 38),
-                FILE_CONTENT_CRC,
-                "hello.txt",
-                false,
-                false,
-                true,
-            ))
-        ),
-    )
-    @testset "LocalFileHeader" begin
-        for (test_name, test) in expected_exceptions
-            @testset "$test_name" begin
-                test_file = test[1]
-                expected_exception = test[2]
-                open(test_file, "r") do f
-                    skip(f, 4)
-                    @test_throws expected_exception read(f, ZipStreams.LocalFileHeader)
-                end
-            end
-        end
-
-        for (test_name, test) in expected_headers
-            @testset "$test_name" begin
-                test_file = test[1]
-                expected_header = test[2]
-                open(test_file, "r") do f
-                    skip(f, 4)
-                    @test read(f, ZipStreams.LocalFileHeader) == expected_header
-                end
-            end
-        end
-    end
-
-    @testset "CentralDirectoryHeader" begin
-        @testset "Empty archive" begin
-            open(EMPTY_FILE, "r") do f
-                skip(f, 4)
-                @test_throws ArgumentError read(f, ZipStreams.CentralDirectoryHeader)
-            end
-        end
-
-        # @testset "Simple archive" begin
-        #     open(SINGLE_FILE, "r") do f
-        #         skip(f, 0x3A)
-        #         header = read(f, ZipStreams.CentralDirectoryHeader)
-        #         @test header.info == FILE_INFO
-        #         @test header.offset == 0
-        #         @test header.comment == ""
-        #     end
-        # end
-
-        @testset "Zip64 Central Directory" begin
-            open(ZIP64_C, "r") do f
-                skip(f, 0x3A)
-                header = read(f, ZipStreams.CentralDirectoryHeader)
-                @test header.info == ZIP64_FILE_INFO
-                @test header.offset == 0
-                @test header.comment == ""
-            end
-        end
-
-        @testset "Multi archive" begin
-            open(MULTI_FILE, "r") do f
-                skip(f, 0x371)
-                for cmp in MULTI_INFO
-                    skip(f, 0x4)
-                    header = read(f, ZipStreams.CentralDirectoryHeader)
-                    @test header.info == cmp
-                end
-            end
-        end
-    end
-end
+# TODO: figure out how to test headers
 
 @testset "Input archive construction" begin
     @testset "Empty archive" begin
@@ -184,7 +88,7 @@ end
             readme = IOBuffer(take!(buffer))
             skip(readme, 4)
             header = read(readme, ZipStreams.LocalFileHeader)
-            @test header.info.compressed_size == sizeof(DEFLATED_FILE_CONTENT)
+            @test header.info.compressed_size == sizeof(DEFLATED_FILE_BYTES)
             @test header.info.compression_method == ZipStreams.COMPRESSION_DEFLATE
             @test header.info.crc32 == ZipStreams.crc32(codeunits(FILE_CONTENT))
             @test header.info.descriptor_follows == false

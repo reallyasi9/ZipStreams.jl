@@ -1,13 +1,15 @@
 import ZipStreams: UnlimitedLimiter, FixedSizeLimiter, SentinelLimiter, bytes_remaining, bytes_consumed, consume!
 
 @testset "UnlimitedLimiter" begin
-    buf = IOBuffer()
+    buf = IOBuffer(b"Fake content so buffer is not at EOF")
     l = UnlimitedLimiter()
     @test bytes_remaining(l, buf) == typemax(Int)
     @test bytes_consumed(l) == 0
     consume!(l, codeunits(FILE_CONTENT))
     @test bytes_remaining(l, buf) == typemax(Int)
     @test bytes_consumed(l) == sizeof(FILE_CONTENT)
+    read(buf)
+    @test bytes_remaining(l, buf) == 0
 end
 
 @testset "FixedSizeLimiter" begin

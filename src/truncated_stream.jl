@@ -21,7 +21,10 @@ mutable struct UnlimitedLimiter <: AbstractLimiter
     UnlimitedLimiter() = new(0)
 end
 
-function bytes_remaining(::UnlimitedLimiter, ::IO)
+function bytes_remaining(::UnlimitedLimiter, io::IO)
+    if eof(io)
+        return 0
+    end
     return typemax(Int)
 end
 
@@ -276,7 +279,15 @@ end
 
 function Base.eof(io::TruncatedSource)
     # in order of complexity
-    io._eof = io._eof || eof(io.stream) || (bytes_remaining(io.limiter, io.stream) == 0)
+    if io._eof
+        return true
+    end
+    s_eof = eof(io.stream)
+    b_eof = bytes_remaining(io.limiter, io.stream) == 0
+    if s_eof && !b_eof
+        error("EOF in underlying stream before limiter reached limit")
+    end
+    io._eof = s_eof || b_eof
     return io._eof
 end
 
