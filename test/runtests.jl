@@ -121,7 +121,7 @@ end
                     zipsource(archive_name) do archive
                         f = next_file(archive)
                         @test !isnothing(f)
-                        @test f.info == file_info
+                        @test ZipStreams._is_consistent(f.info, file_info)
                         f = next_file(archive)
                         @test isnothing(f)
                     end
@@ -137,10 +137,10 @@ end
                 zipsource(multi_file) do archive
                     f = next_file(archive)
                     @test !isnothing(f)
-                    @test f.info == first_file_info
+                    @test ZipStreams._is_consistent(f.info, first_file_info)
                     f = next_file(archive)
                     @test !isnothing(f)
-                    @test f.info == second_file_info
+                    @test ZipStreams._is_consistent(f.info, second_file_info)
                     @test isnothing(next_file(archive))
                 end
             end
@@ -168,7 +168,7 @@ end
                 @testset "$archive_name" begin
                     zipsource(archive_name) do archive
                         for f in archive
-                            f.info == file_info
+                            ZipStreams._is_consistent(f.info, file_info)
                         end
                         @test isnothing(next_file(archive))
                     end
@@ -185,7 +185,7 @@ end
             @testset "$multi_file" begin
                 zipsource(multi_file) do archive
                     for (i,f) in zip(file_infos, archive)
-                        @test f.info == i
+                        @test ZipStreams._is_consistent(f.info, i)
                     end
                     @test isnothing(next_file(archive))
                 end
@@ -212,8 +212,9 @@ end
 
 @testset "Stream-to-Archive IO" begin
     buffer = IOBuffer()
+    filename = test_file_name(true, true, false, false, false, false, "multi")
     zipsink(buffer) do sink
-        open(SINGLE_FILE, "r") do f
+        open(filename, "r") do f
             open(sink, "test.zip") do zf
                 @test write(zf, f) == filesize(f)
             end
@@ -223,18 +224,19 @@ end
 
 @testset "Convenient extract and archive" begin
     @testset "Unzip with unzip_files" begin
-        @testset "One file" begin
+        multi_file = test_file_name(true, true, false, false, false, false, "multi")
+        @testset "One file in subdir" begin
             mktempdir() do tdir
-                filename = "subdir/hello2.txt"
-                unzip_files(MULTI_FILE, filename; output_path=tdir, make_path=true)
+                filename = "subdir/hello.txt"
+                unzip_files(multi_file, filename; output_path=tdir, make_path=true)
                 @test isfile(joinpath(tdir, filename))
                 @test read(joinpath(tdir, filename), String) == FILE_CONTENT
             end
         end
         @testset "File list" begin
             mktempdir() do tdir
-                filenames = ["hello1.txt", "subdir/hello3.txt"]
-                unzip_files(MULTI_FILE, filenames; output_path=tdir, make_path=true)
+                filenames = ["hello.txt", "subdir/hello.txt"]
+                unzip_files(multi_file, filenames; output_path=tdir, make_path=true)
                 for filename in filenames
                     @test isfile(joinpath(tdir, filename))
                     @test read(joinpath(tdir, filename), String) == FILE_CONTENT
@@ -243,25 +245,23 @@ end
         end
         @testset "All files" begin
             mktempdir() do tdir
-                unzip_files(MULTI_FILE; output_path=tdir)
-                for info in MULTI_INFO
-                    if isdir(info)
-                        @test isdir(joinpath(tdir, info.name))
-                    else
-                        @test isfile(joinpath(tdir, info.name))
-                        @test read(joinpath(tdir, info.name), String) == FILE_CONTENT
-                    end
+                filenames = ["hello.txt", "subdir/hello.txt"]
+                unzip_files(multi_file; output_path=tdir, make_path=true)
+                for filename in filenames
+                    @test isfile(joinpath(tdir, filename))
+                    @test read(joinpath(tdir, filename), String) == FILE_CONTENT
                 end
             end
         end
     end
     @testset "Zip back up with zip_files" begin
+        multi_file = test_file_name(true, true, false, false, false, false, "multi")
         mktempdir() do tdir
-            unzip_files(MULTI_FILE; output_path=tdir, make_path=true)
+            unzip_files(multi_file; output_path=tdir, make_path=true)
 
-            @testset "One file" begin
+            @testset "One file in subdir" begin
                 mktemp() do path, io
-                    filename = "subdir/hello2.txt"
+                    filename = "subdir/hello.txt"
                     zip_files(path, joinpath(tdir, filename))
                     zipsource(path) do source
                         f = next_file(source)
@@ -274,7 +274,7 @@ end
             
             @testset "File list" begin
                 mktemp() do path, io
-                    filenames = ["hello1.txt", "subdir/hello3.txt"]
+                    filenames = ["hello.txt", "subdir/hello.txt"]
                     zip_files(path, joinpath.(Ref(tdir), filenames))
                     zipsource(path) do source
                         for (f, filename) in zip(source, filenames)

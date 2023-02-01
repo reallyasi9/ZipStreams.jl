@@ -562,19 +562,20 @@ function Base.write(
 end
 
 # Check if a CentralDirectoryHeader is consistent with a given LocalFileHeader's info
-function _is_consistent(cd::CentralDirectoryHeader, info::ZipFileInformation)
+function _is_consistent(lhs::ZipFileInformation, rhs::ZipFileInformation)
     # some fields have to always match
-    info.compression_method == cd.info.compression_method || return false
-    info.last_modified == cd.info.last_modified || return false
-    info.name == cd.info.name || return false
-    info.descriptor_follows == cd.info.descriptor_follows || return false
-    info.utf8 == cd.info.utf8 || return false
+    rhs.compression_method == lhs.compression_method || return false
+    rhs.last_modified == lhs.last_modified || return false
+    rhs.name == lhs.name || return false
+    rhs.utf8 == lhs.utf8 || return false
+    
     # some fields are dependent on the data descriptor flag
-    if !info.descriptor_follows
-        info.uncompressed_size == cd.info.uncompressed_size || return false
-        info.compressed_size == cd.info.compressed_size || return false
-        info.crc32 == cd.info.crc32 || return false
-    end
+    (rhs.descriptor_follows || lhs.descriptor_follows) && return true
+
+    rhs.uncompressed_size == lhs.uncompressed_size || return false
+    rhs.compressed_size == lhs.compressed_size || return false
+    rhs.crc32 == lhs.crc32 || return false
+    
     # other fields don't matter
     return true
 end

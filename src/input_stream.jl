@@ -329,7 +329,7 @@ function validate(zs::ZipArchiveSource)
     for (i, lf_info) in enumerate(zs.directory)
         ncd += 1
         cd_info = read(zs.source, CentralDirectoryHeader)
-        if !_is_consistent(cd_info, lf_info)
+        if !_is_consistent(cd_info.info, lf_info)
             error("discrepancy detected in central directory entry $i: expected $lf_info, got $(cd_info.info)")
         end
         if cd_info.offset != zs.offsets[i]

@@ -89,7 +89,7 @@ function test_file_info(deflate::Bool, dd::Bool, zip64::Bool, utf8::Bool, subdir
     last_modified = DateTime(1980, 1, 1, 0, 0, 0)
     crc32 = FILE_CONTENT_CRC
     extrafield_length = zip64 ? 20 : 0
-    filename = utf8 ? "👋hello.txt" : "hello.txt"
+    filename = utf8 ? "hello👋.txt" : "hello.txt"
     if !isempty(subdir)
         filename = subdir * ZipStreams.ZIP_PATH_DELIMITER * filename
     end
