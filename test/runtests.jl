@@ -286,15 +286,14 @@ end
                 end
             end
             
-            @testset "All files" begin
+            @testset "Entire directory" begin
                 @testset "No recurse directories (default)" begin
                     mktemp() do path, io
-                        zip_files(path, readdir(tdir; join=true))
-        
-                        expected = filter(x -> !isdir(x) && length(split(x.name, ZipStreams.ZIP_PATH_DELIMITER)) == 1, MULTI_INFO)
+                        filenames = ["hello.txt"]
+                        zip_files(path, tdir)
                         zipsource(path) do archive
-                            for (f, info) in zip(archive, expected)
-                                expected_path = join([ZipStreams.strip_dots(relpath(tdir)), info.name], ZipStreams.ZIP_PATH_DELIMITER)
+                            for (f, filename) in zip(archive, filenames)
+                                expected_path = join([ZipStreams.strip_dots(relpath(tdir)), filename], ZipStreams.ZIP_PATH_DELIMITER)
                                 @test f.info.name == expected_path
                                 @test read(f, String) == FILE_CONTENT
                             end
@@ -303,12 +302,11 @@ end
                 end
                 @testset "Recurse directories" begin
                     mktemp() do path, io
+                        filenames = ["hello.txt", "subdir/hello.txt"]
                         zip_files(path, tdir; recurse_directories=true)
-        
-                        expected = filter(x -> !isdir(x) && length(split(x.name, ZipStreams.ZIP_PATH_DELIMITER)) == 1, MULTI_INFO)
                         zipsource(path) do archive
-                            for (f, info) in zip(archive, expected)
-                                expected_path = join([ZipStreams.strip_dots(relpath(tdir)), info.name], ZipStreams.ZIP_PATH_DELIMITER)
+                            for (f, filename) in zip(archive, filenames)
+                                expected_path = join([ZipStreams.strip_dots(relpath(tdir)), filename], ZipStreams.ZIP_PATH_DELIMITER)
                                 @test f.info.name == expected_path
                                 @test read(f, String) == FILE_CONTENT
                             end
