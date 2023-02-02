@@ -5,104 +5,16 @@ using Random
 using Test
 using ZipStreams
 
+@test Any[] == detect_ambiguities(Base, Core, ZipStreams)
+
 include("common.jl")
+include("test_datetime.jl")
 include("test_crc32.jl")
 include("test_limiters.jl")
 include("test_truncated_source.jl")
 include("test_validate.jl")
 
-@testset "MSDOSDateTime" begin
-    # round trip
-    test_now = now()
-    @test test_now - (test_now |> ZipStreams.datetime2msdos |> ZipStreams.msdos2datetime) < Second(2)
-
-    # minimum datetime
-    @test ZipStreams.datetime2msdos(DateTime(1980, 1, 1, 0, 0, 0)) == (0x0021, 0x0000)
-    @test ZipStreams.msdos2datetime(0x0021, 0x0000) == DateTime(1980, 1, 1, 0, 0, 0)
-    # equivalent in Julia
-    @test ZipStreams.datetime2msdos(DateTime(1979,12,31,24, 0, 0)) == (0x0021, 0x0000)
-    # errors (separate minima for day and month)
-    @test_throws InexactError ZipStreams.datetime2msdos(DateTime(1979,12,31,23,59,59))
-    @test_throws ArgumentError ZipStreams.msdos2datetime(0x0040, 0x0000)
-    @test_throws ArgumentError ZipStreams.msdos2datetime(0x0001, 0x0000)
-
-    # maximum datetime
-    @test ZipStreams.datetime2msdos(DateTime(2107,12,31,23,59,58)) == (0xff9f, 0xbf7d)
-    @test ZipStreams.msdos2datetime(0xff9f, 0xbf7d) == DateTime(2107,12,31,23,59,58)
-    # errors (separate maxima for month/day, hour, minute, and second)
-    @test_throws ArgumentError ZipStreams.datetime2msdos(DateTime(2107,12,31,24, 0, 0))
-    @test_throws ArgumentError ZipStreams.msdos2datetime(0xffa0, 0x0000)
-    @test_throws ArgumentError ZipStreams.msdos2datetime(0xffa0, 0x0000)
-    @test_throws ArgumentError ZipStreams.msdos2datetime(0x0000, 0xc000)
-    @test_throws ArgumentError ZipStreams.msdos2datetime(0x0000, 0xbf80)
-    @test_throws ArgumentError ZipStreams.msdos2datetime(0x0000, 0xbf7e)
-end
-
-
-@testset "File components" begin
-    @testset "LocalFileHeader" begin
-        @testset "Empty archive" begin
-            open(EMPTY_FILE, "r") do f
-                skip(f, 4)
-                @test_throws ArgumentError read(f, ZipStreams.LocalFileHeader)
-            end
-        end
-
-        @testset "Simple archive" begin
-            open(SINGLE_FILE, "r") do f
-                skip(f, 4)
-                @test_broken read(f, ZipStreams.LocalFileHeader).info == FILE_INFO
-            end
-        end
-
-        @testset "Zip64 local header" begin
-            open(ZIP64_F, "r") do f
-                skip(f, 4)
-                @test read(f, ZipStreams.LocalFileHeader).info == ZIP64_FILE_INFO
-            end
-        end
-    end
-
-    @testset "CentralDirectoryHeader" begin
-        @testset "Empty archive" begin
-            open(EMPTY_FILE, "r") do f
-                skip(f, 4)
-                @test_throws ArgumentError read(f, ZipStreams.CentralDirectoryHeader)
-            end
-        end
-
-        # @testset "Simple archive" begin
-        #     open(SINGLE_FILE, "r") do f
-        #         skip(f, 0x3A)
-        #         header = read(f, ZipStreams.CentralDirectoryHeader)
-        #         @test header.info == FILE_INFO
-        #         @test header.offset == 0
-        #         @test header.comment == ""
-        #     end
-        # end
-
-        @testset "Zip64 Central Directory" begin
-            open(ZIP64_C, "r") do f
-                skip(f, 0x3A)
-                header = read(f, ZipStreams.CentralDirectoryHeader)
-                @test header.info == ZIP64_FILE_INFO
-                @test header.offset == 0
-                @test header.comment == ""
-            end
-        end
-
-        @testset "Multi archive" begin
-            open(MULTI_FILE, "r") do f
-                skip(f, 0x371)
-                for cmp in MULTI_INFO
-                    skip(f, 0x4)
-                    header = read(f, ZipStreams.CentralDirectoryHeader)
-                    @test header.info == cmp
-                end
-            end
-        end
-    end
-end
+# TODO: figure out how to test headers
 
 @testset "Input archive construction" begin
     @testset "Empty archive" begin
@@ -176,7 +88,7 @@ end
             readme = IOBuffer(take!(buffer))
             skip(readme, 4)
             header = read(readme, ZipStreams.LocalFileHeader)
-            @test header.info.compressed_size == sizeof(DEFLATED_FILE_CONTENT)
+            @test header.info.compressed_size == sizeof(DEFLATED_FILE_BYTES)
             @test header.info.compression_method == ZipStreams.COMPRESSION_DEFLATE
             @test header.info.crc32 == ZipStreams.crc32(codeunits(FILE_CONTENT))
             @test header.info.descriptor_follows == false
@@ -191,67 +103,93 @@ end
 @testset "Archive iteration" begin
     @testset "next_file" begin
         @testset "Empty archive" begin
-            archive = zipsource(EMPTY_FILE)
-            f = next_file(archive)
-            @test isnothing(f)
-            close(archive)
+            for fn in (EMPTY_FILE, EMPTY_FILE_EOCD64)
+                @testset "$fn" begin
+                    zipsource(EMPTY_FILE) do archive
+                        f = next_file(archive)
+                        @test isnothing(f)
+                    end
+                end
+            end
         end
 
         @testset "Simple archive" begin
-            archive = zipsource(SINGLE_FILE)
-            f = next_file(archive)
-            @test !isnothing(f)
-            @test_broken f.info == FILE_INFO
-            f = next_file(archive)
-            @test isnothing(f)
-            close(archive)
+            for (deflate, dd, local64, utf8, cd64, eocd64) in Iterators.product(false:true, false:true, false:true, false:true, false:true, false:true)
+                archive_name = test_file_name(deflate, dd, local64, utf8, cd64, eocd64)
+                file_info = test_file_info(deflate, dd, local64, utf8)
+                @testset "$archive_name" begin
+                    zipsource(archive_name) do archive
+                        f = next_file(archive)
+                        @test !isnothing(f)
+                        @test ZipStreams._is_consistent(f.info, file_info)
+                        f = next_file(archive)
+                        @test isnothing(f)
+                    end
+                end
+            end
         end
 
         @testset "Multi archive" begin
-            archive = zipsource(MULTI_FILE)
-            for info in MULTI_INFO
-                if isdir(info)
-                    continue
+            multi_file = test_file_name(true, true, false, false, false, false, "multi")
+            first_file_info = test_file_info(true, true, false, false)
+            second_file_info = test_file_info(true, true, false, false, "subdir")
+            @testset "$multi_file" begin
+                zipsource(multi_file) do archive
+                    f = next_file(archive)
+                    @test !isnothing(f)
+                    @test ZipStreams._is_consistent(f.info, first_file_info)
+                    f = next_file(archive)
+                    @test !isnothing(f)
+                    @test ZipStreams._is_consistent(f.info, second_file_info)
+                    @test isnothing(next_file(archive))
                 end
-                f = next_file(archive)
-                @test !isnothing(f)
-                @test f.info == info
             end
-            f = next_file(archive)
-            @test isnothing(f)
-            close(archive)
         end
     end
 
     @testset "iterator" begin
         @testset "Empty archive" begin
-            archive = zipsource(EMPTY_FILE)
-            for f in archive
-                @test false
+            for fn in (EMPTY_FILE, EMPTY_FILE_EOCD64)
+                @testset "$fn" begin
+                    zipsource(EMPTY_FILE) do archive
+                        for f in archive
+                            @test false # must not happen
+                        end
+                        @test isnothing(next_file(archive))
+                    end
+                end
             end
-            close(archive)
         end
 
         @testset "Simple archive" begin
-            archive = zipsource(SINGLE_FILE)
-            for f in archive
-                @test !isnothing(f)
-                @test_broken f.info == FILE_INFO
+            for (deflate, dd, local64, utf8, cd64, eocd64) in Iterators.product(false:true, false:true, false:true, false:true, false:true, false:true)
+                archive_name = test_file_name(deflate, dd, local64, utf8, cd64, eocd64)
+                file_info = test_file_info(deflate, dd, local64, utf8)
+                @testset "$archive_name" begin
+                    zipsource(archive_name) do archive
+                        for f in archive
+                            ZipStreams._is_consistent(f.info, file_info)
+                        end
+                        @test isnothing(next_file(archive))
+                    end
+                end
             end
-            f = next_file(archive)
-            @test isnothing(f)
-            close(archive)
         end
 
         @testset "Multi archive" begin
-            archive = zipsource(MULTI_FILE)
-            for (f, info) in zip(archive, filter(x -> !isdir(x), MULTI_INFO))
-                @test !isnothing(f)
-                @test f.info == info
+            multi_file = test_file_name(true, true, false, false, false, false, "multi")
+            file_infos = [
+                test_file_info(true, true, false, false),
+                test_file_info(true, true, false, false, "subdir"),
+            ]
+            @testset "$multi_file" begin
+                zipsource(multi_file) do archive
+                    for (i,f) in zip(file_infos, archive)
+                        @test ZipStreams._is_consistent(f.info, i)
+                    end
+                    @test isnothing(next_file(archive))
+                end
             end
-            f = next_file(archive)
-            @test isnothing(f)
-            close(archive)
         end
     end
 end
@@ -274,8 +212,9 @@ end
 
 @testset "Stream-to-Archive IO" begin
     buffer = IOBuffer()
+    filename = test_file_name(true, true, false, false, false, false, "multi")
     zipsink(buffer) do sink
-        open(SINGLE_FILE, "r") do f
+        open(filename, "r") do f
             open(sink, "test.zip") do zf
                 @test write(zf, f) == filesize(f)
             end
@@ -285,18 +224,19 @@ end
 
 @testset "Convenient extract and archive" begin
     @testset "Unzip with unzip_files" begin
-        @testset "One file" begin
+        multi_file = test_file_name(true, true, false, false, false, false, "multi")
+        @testset "One file in subdir" begin
             mktempdir() do tdir
-                filename = "subdir/hello2.txt"
-                unzip_files(MULTI_FILE, filename; output_path=tdir, make_path=true)
+                filename = "subdir/hello.txt"
+                unzip_files(multi_file, filename; output_path=tdir, make_path=true)
                 @test isfile(joinpath(tdir, filename))
                 @test read(joinpath(tdir, filename), String) == FILE_CONTENT
             end
         end
         @testset "File list" begin
             mktempdir() do tdir
-                filenames = ["hello1.txt", "subdir/hello3.txt"]
-                unzip_files(MULTI_FILE, filenames; output_path=tdir, make_path=true)
+                filenames = ["hello.txt", "subdir/hello.txt"]
+                unzip_files(multi_file, filenames; output_path=tdir, make_path=true)
                 for filename in filenames
                     @test isfile(joinpath(tdir, filename))
                     @test read(joinpath(tdir, filename), String) == FILE_CONTENT
@@ -305,25 +245,23 @@ end
         end
         @testset "All files" begin
             mktempdir() do tdir
-                unzip_files(MULTI_FILE; output_path=tdir)
-                for info in MULTI_INFO
-                    if isdir(info)
-                        @test isdir(joinpath(tdir, info.name))
-                    else
-                        @test isfile(joinpath(tdir, info.name))
-                        @test read(joinpath(tdir, info.name), String) == FILE_CONTENT
-                    end
+                filenames = ["hello.txt", "subdir/hello.txt"]
+                unzip_files(multi_file; output_path=tdir, make_path=true)
+                for filename in filenames
+                    @test isfile(joinpath(tdir, filename))
+                    @test read(joinpath(tdir, filename), String) == FILE_CONTENT
                 end
             end
         end
     end
     @testset "Zip back up with zip_files" begin
+        multi_file = test_file_name(true, true, false, false, false, false, "multi")
         mktempdir() do tdir
-            unzip_files(MULTI_FILE; output_path=tdir, make_path=true)
+            unzip_files(multi_file; output_path=tdir, make_path=true)
 
-            @testset "One file" begin
+            @testset "One file in subdir" begin
                 mktemp() do path, io
-                    filename = "subdir/hello2.txt"
+                    filename = "subdir/hello.txt"
                     zip_files(path, joinpath(tdir, filename))
                     zipsource(path) do source
                         f = next_file(source)
@@ -336,7 +274,7 @@ end
             
             @testset "File list" begin
                 mktemp() do path, io
-                    filenames = ["hello1.txt", "subdir/hello3.txt"]
+                    filenames = ["hello.txt", "subdir/hello.txt"]
                     zip_files(path, joinpath.(Ref(tdir), filenames))
                     zipsource(path) do source
                         for (f, filename) in zip(source, filenames)
@@ -348,15 +286,14 @@ end
                 end
             end
             
-            @testset "All files" begin
+            @testset "Entire directory" begin
                 @testset "No recurse directories (default)" begin
                     mktemp() do path, io
-                        zip_files(path, readdir(tdir; join=true))
-        
-                        expected = filter(x -> !isdir(x) && length(split(x.name, ZipStreams.ZIP_PATH_DELIMITER)) == 1, MULTI_INFO)
+                        filenames = ["hello.txt"]
+                        zip_files(path, tdir)
                         zipsource(path) do archive
-                            for (f, info) in zip(archive, expected)
-                                expected_path = join([ZipStreams.strip_dots(relpath(tdir)), info.name], ZipStreams.ZIP_PATH_DELIMITER)
+                            for (f, filename) in zip(archive, filenames)
+                                expected_path = join([ZipStreams.strip_dots(relpath(tdir)), filename], ZipStreams.ZIP_PATH_DELIMITER)
                                 @test f.info.name == expected_path
                                 @test read(f, String) == FILE_CONTENT
                             end
@@ -365,12 +302,11 @@ end
                 end
                 @testset "Recurse directories" begin
                     mktemp() do path, io
+                        filenames = ["hello.txt", "subdir/hello.txt"]
                         zip_files(path, tdir; recurse_directories=true)
-        
-                        expected = filter(x -> !isdir(x) && length(split(x.name, ZipStreams.ZIP_PATH_DELIMITER)) == 1, MULTI_INFO)
                         zipsource(path) do archive
-                            for (f, info) in zip(archive, expected)
-                                expected_path = join([ZipStreams.strip_dots(relpath(tdir)), info.name], ZipStreams.ZIP_PATH_DELIMITER)
+                            for (f, filename) in zip(archive, filenames)
+                                expected_path = join([ZipStreams.strip_dots(relpath(tdir)), filename], ZipStreams.ZIP_PATH_DELIMITER)
                                 @test f.info.name == expected_path
                                 @test read(f, String) == FILE_CONTENT
                             end

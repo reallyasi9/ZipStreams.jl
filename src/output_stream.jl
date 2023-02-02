@@ -114,8 +114,8 @@ function Base.close(
     end
     flush(zipfile)
     crc = crc32(zipfile.sink)
-    c_size = bytes_out(zipfile)
-    uc_size = bytes_in(zipfile)
+    c_size = bytes_in(zipfile)
+    uc_size = bytes_out(zipfile)
     # FIXME: Not atomic!
     # NOTE: not standard per se, but more common than not to use a signature here.
     if zipfile.info.descriptor_follows
@@ -136,12 +136,14 @@ function Base.close(
 
     # Only force Zip64 in the Central Directory if necessary
     zip64 = zipfile.offset >= typemax(UInt32) || c_size >= typemax(UInt32) || uc_size >= typemax(UInt32)
+    extra = zip64 ? 0 : 20
     directory_info = ZipFileInformation(
         zipfile.info.compression_method,
         uc_size,
         c_size,
         now(),
         crc,
+        extra,
         zipfile.info.name,
         true,
         zipfile.info.utf8,
@@ -349,6 +351,7 @@ function Base.mkdir(ziparchive::ZipArchiveSink, path::AbstractString; comment::A
         0,
         now(),
         0,
+        0,
         p * ZIP_PATH_DELIMITER,
         false,
         ziparchive.utf8,
@@ -469,6 +472,7 @@ function Base.open(
         0,
         now(),
         CRC32_INIT,
+        20%UInt16, # always using ZIP64
         fname,
         use_descriptor,
         utf8,
@@ -586,6 +590,7 @@ function write_file(
     offset = bytes_out(archive)
     use_descriptor = false
     zip64 = offset >= typemax(UInt32) || ubytes >= typemax(UInt32) || cbytes >= typemax(UInt32)
+    extra = zip64 ? 20 : 0
 
     info = ZipFileInformation(
         ccode,
@@ -593,6 +598,7 @@ function write_file(
         cbytes,
         now(),
         crc,
+        extra,
         fname,
         use_descriptor,
         utf8,

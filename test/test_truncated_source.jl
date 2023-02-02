@@ -44,7 +44,7 @@ import ZipStreams: TruncatedSource, UnlimitedLimiter, FixedSizeLimiter, Sentinel
 
     @testset "SentinelLimiter" begin
         seekstart(BUFFER)
-        t = TruncatedSource(SentinelLimiter(TRUNC_SENTINEL), BUFFER)
+        t = TruncatedSource(SentinelLimiter(UInt64, TRUNC_SENTINEL), BUFFER)
         @test bytesavailable(t) == sizeof(TRUNC_CONTENT) # first sentinel found
         @test bytes_consumed(t) == 0
         @test read(t, bytesavailable(t)) == TRUNC_CONTENT
@@ -62,7 +62,7 @@ import ZipStreams: TruncatedSource, UnlimitedLimiter, FixedSizeLimiter, Sentinel
     @testset "IO interface" begin
         @testset "Basic pass-through" begin
             seekstart(BUFFER)
-            t = TruncatedSource(SentinelLimiter(TRUNC_SENTINEL), BUFFER)
+            t = TruncatedSource(SentinelLimiter(UInt64, TRUNC_SENTINEL), BUFFER)
             @test eof(t) == false
             @test isreadable(t) == true
             @test iswritable(t) == false
@@ -75,7 +75,7 @@ import ZipStreams: TruncatedSource, UnlimitedLimiter, FixedSizeLimiter, Sentinel
 
         @testset "skip" begin
             seekstart(BUFFER)
-            t = TruncatedSource(SentinelLimiter(TRUNC_SENTINEL), BUFFER)
+            t = TruncatedSource(SentinelLimiter(UInt64, TRUNC_SENTINEL), BUFFER)
             skip(t, sizeof(TRUNC_CONTENT) * 2 + sizeof(TRUNC_SENTINEL)) # drops data on the floor.
             @test bytesavailable(t) == 0 # valid real sentinel found, proving limiter is notified properly
             @test eof(t) == true
@@ -83,7 +83,7 @@ import ZipStreams: TruncatedSource, UnlimitedLimiter, FixedSizeLimiter, Sentinel
 
         @testset "readbytes!" begin
             seekstart(BUFFER)
-            t = TruncatedSource(SentinelLimiter(TRUNC_SENTINEL), BUFFER)
+            t = TruncatedSource(SentinelLimiter(UInt64, TRUNC_SENTINEL), BUFFER)
             a = UInt8[] # zero size
             @test readbytes!(t, a, sizeof(TRUNC_CONTENT)-1) == sizeof(TRUNC_CONTENT)-1
             @test a == TRUNC_CONTENT[1:end-1]
@@ -101,7 +101,7 @@ import ZipStreams: TruncatedSource, UnlimitedLimiter, FixedSizeLimiter, Sentinel
 
         @testset "readavailable" begin
             seekstart(BUFFER)
-            t = TruncatedSource(SentinelLimiter(TRUNC_SENTINEL), BUFFER)
+            t = TruncatedSource(SentinelLimiter(UInt64, TRUNC_SENTINEL), BUFFER)
             a = readavailable(t)
             @test a == TRUNC_CONTENT
             a = readavailable(t)

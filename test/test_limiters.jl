@@ -1,13 +1,15 @@
 import ZipStreams: UnlimitedLimiter, FixedSizeLimiter, SentinelLimiter, bytes_remaining, bytes_consumed, consume!
 
 @testset "UnlimitedLimiter" begin
-    buf = IOBuffer()
+    buf = IOBuffer(b"Fake content so buffer is not at EOF")
     l = UnlimitedLimiter()
     @test bytes_remaining(l, buf) == typemax(Int)
     @test bytes_consumed(l) == 0
     consume!(l, codeunits(FILE_CONTENT))
     @test bytes_remaining(l, buf) == typemax(Int)
     @test bytes_consumed(l) == sizeof(FILE_CONTENT)
+    read(buf)
+    @test bytes_remaining(l, buf) == 0
 end
 
 @testset "FixedSizeLimiter" begin
@@ -40,7 +42,7 @@ const SENTINEL = UInt8[222,173,190,239]
     ZipStreams.writele(buf, content_len)
     seekstart(buf)
 
-    l = SentinelLimiter(SENTINEL)
+    l = SentinelLimiter(UInt64, SENTINEL)
     @test bytes_remaining(l, buf) == sizeof(ORIG_CONTENT) # to first sentinel
     @test bytes_consumed(l) == 0
     a = read(buf, sizeof(ORIG_CONTENT))
@@ -59,9 +61,9 @@ const SENTINEL = UInt8[222,173,190,239]
     @test bytes_consumed(l) == content_len
 
     @testset "failure function construction" begin
-        @test SentinelLimiter(b"ABCDABD").failure_function == [-1,0,0,0,-1,0,2,0] .+ 1
-        @test SentinelLimiter(b"ABACABABC").failure_function == [-1,0,-1,1,-1,0,-1,3,2,0] .+ 1
-        @test SentinelLimiter(b"ABACABABA").failure_function == [-1,0,-1,1,-1,0,-1,3,-1,3] .+ 1
-        @test SentinelLimiter(b"PARTICIPATE IN PARACHUTE").failure_function == [-1,0,0,0,0,0,0,-1,0,2,0,0,0,0,0,-1,0,0,3,0,0,0,0,0,0] .+ 1
+        @test SentinelLimiter(UInt32, b"ABCDABD").failure_function == [-1,0,0,0,-1,0,2,0] .+ 1
+        @test SentinelLimiter(UInt32, b"ABACABABC").failure_function == [-1,0,-1,1,-1,0,-1,3,2,0] .+ 1
+        @test SentinelLimiter(UInt32, b"ABACABABA").failure_function == [-1,0,-1,1,-1,0,-1,3,-1,3] .+ 1
+        @test SentinelLimiter(UInt32, b"PARTICIPATE IN PARACHUTE").failure_function == [-1,0,0,0,0,0,0,-1,0,2,0,0,0,0,0,-1,0,0,3,0,0,0,0,0,0] .+ 1
     end
 end

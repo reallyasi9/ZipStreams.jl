@@ -59,45 +59,55 @@ Base.isopen(f::ForwardWriteOnlyIO) = isopen(f.io)
 
 # All test files have the same content
 const FILE_CONTENT = "Hello, Julia!\n"
-const DEFLATED_FILE_CONTENT = transcode(DeflateCompressor, FILE_CONTENT)
+const FILE_BYTES = collect(codeunits(FILE_CONTENT))
+const DEFLATED_FILE_BYTES = UInt8[0xf3, 0x48, 0xcd, 0xc9, 0xc9, 0xd7, 0x51, 0xf0, 0x2a, 0xcd, 0xc9, 0x4c, 0x54, 0xe4, 0x02, 0x00]
+const EMPTY_CRC = UInt32(0)
+const ZERO_CRC = UInt32(0xD202EF8D)
+const FILE_CONTENT_CRC = UInt32(0xFE69594D)
 
-const FILE_INFO = file_info(; compression=ZipStreams.COMPRESSION_DEFLATE, datetime=DateTime(2023, 1, 20, 0, 35, 14))
-const ZIP64_FILE_INFO = file_info(; compression=ZipStreams.COMPRESSION_DEFLATE, zip64=true)
-const SUBDIR_INFO = subdir_info()
-const MULTI_INFO = ZipStreams.ZipFileInformation[
-    file_info(; name="hello1.txt", datetime=DateTime(2022, 8, 19, 21, 46, 44)),
-    subdir_info(; name="subdir/", datetime=DateTime(2022, 8, 19, 21, 47, 34)),
-    file_info(; name="subdir/hello2.txt", datetime=DateTime(2022, 8, 19, 21, 47, 24)),
-    file_info(; name="subdir/hello3.txt", datetime=DateTime(2022, 8, 19, 21, 47, 34)),
-    subdir_info(; name="subdir/subdir/", datetime=DateTime(2022, 8, 19, 21, 47, 44)),
-    subdir_info(; name="subdir/subdir/subdir/", datetime=DateTime(2022, 8, 19, 21, 48, 2)),
-    file_info(; name="subdir/subdir/subdir/hello5.txt", datetime=DateTime(2022, 8, 19, 21, 47, 54)),
-    file_info(; name="subdir/subdir/subdir/hello6.txt", datetime=DateTime(2022, 8, 19, 21, 48, 00)),
-    file_info(; name="subdir/subdir/subdir/hello7.txt", datetime=DateTime(2022, 8, 19, 21, 48, 02)),
-    file_info(; name="subdir/subdir/hello4.txt", datetime=DateTime(2022, 8, 19, 21, 47, 44)),
-]
-
-# Simple tests
+# build test file names
 const ARTIFACT_DIR = artifact"testfiles"
-const EMPTY_FILE = joinpath(ARTIFACT_DIR, "empty.zip")
-const SINGLE_FILE = joinpath(ARTIFACT_DIR, "single.zip")
-const MULTI_FILE = joinpath(ARTIFACT_DIR, "multi.zip")
-const RECURSIVE_FILE = joinpath(ARTIFACT_DIR, "zip.zip")
+function test_file_name(deflate::Bool, dd::Bool, local64::Bool, utf8::Bool, cd64::Bool, eocd64::Bool, extra::String="")
+    s1 = deflate ? "deflate" : "store"
+    s2 = dd ? "dd" : "nodd"
+    s3 = local64 ? "local64" : "nolocal64"
+    s4 = utf8 ? "utf" : "ibm"
+    s5 = cd64 ? "cd64" : "nocd64"
+    s6 = eocd64 ? "eocd64" : "noeocd64"
+    arr = [s1, s2, s3, s4, s5, s6]
+    if !isempty(extra)
+        push!(arr, extra)
+    end
+    filename = join(arr, "-") * ".zip"
+    return joinpath(ARTIFACT_DIR, filename)
+end
 
-# Zip64 format tests
-const ZIP64_F = joinpath(ARTIFACT_DIR, "single-f64.zip")
-const ZIP64_FC = joinpath(ARTIFACT_DIR, "single-f64-cd64.zip")
-const ZIP64_FE = joinpath(ARTIFACT_DIR, "single-f64-eocd64.zip")
-const ZIP64_FCE = joinpath(ARTIFACT_DIR, "single-f64-cd64-eocd64.zip")
-const ZIP64_C = joinpath(ARTIFACT_DIR, "single-cd64.zip")
-const ZIP64_E = joinpath(ARTIFACT_DIR, "single-cd64-eocd64.zip")
-const ZIP64_CE = joinpath(ARTIFACT_DIR, "single-eocd64.zip")
+function test_file_info(deflate::Bool, dd::Bool, zip64::Bool, utf8::Bool, subdir::String="")
+    compression_method = deflate ? ZipStreams.COMPRESSION_DEFLATE : ZipStreams.COMPRESSION_STORE
+    uncompressed_size = length(FILE_BYTES)
+    compressed_size = deflate ? length(DEFLATED_FILE_BYTES) : uncompressed_size
+    last_modified = DateTime(1980, 1, 1, 0, 0, 0)
+    crc32 = FILE_CONTENT_CRC
+    extrafield_length = zip64 ? 20 : 0
+    filename = utf8 ? "hello👋.txt" : "hello.txt"
+    if !isempty(subdir)
+        filename = subdir * ZipStreams.ZIP_PATH_DELIMITER * filename
+    end
+    descriptor_follows = dd
+    return ZipStreams.ZipFileInformation(
+        compression_method,
+        uncompressed_size,
+        compressed_size,
+        last_modified,
+        crc32,
+        extrafield_length,
+        filename,
+        descriptor_follows,
+        utf8,
+        zip64,
+    )
+end
 
-# Data descriptor tests
-const SINGLE_DD_FILE = joinpath(ARTIFACT_DIR, "single-dd.zip")
-const MULTI_DD_FILE = joinpath(ARTIFACT_DIR, "multi-dd.zip")
-
-# Pathological tests
-const PATHOLOGICAL_DD_FILE = joinpath(ARTIFACT_DIR, "single-dd-pathological.zip")
-
-@test Any[] == detect_ambiguities(Base, Core, ZipStreams)
+# Special files
+const EMPTY_FILE = joinpath(ARTIFACT_DIR, "noeocd64-empty.zip")
+const EMPTY_FILE_EOCD64 = joinpath(ARTIFACT_DIR, "eocd64-empty.zip")
