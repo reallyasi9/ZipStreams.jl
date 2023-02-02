@@ -6,7 +6,7 @@ using Printf
 Print information about a ZIP archive or file stream.
 """
 function info(io::IO, za::ZipArchiveSource)
-    print(io, "ZIP archive source stream data after reading ", human_readable_bytes(bytes_read(za)))
+    print(io, "ZIP archive source stream data after reading ", human_readable_bytes(bytes_in(za)))
     if eof(za)
         print(io, " (EOF reached)")
     end
