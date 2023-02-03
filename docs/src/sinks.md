@@ -92,12 +92,12 @@ the file is done in a streaming fashion with a Data Descriptor written at the en
 file data when it is closed. If you want to write an entire file to the archive at once,
 you can use the `write_file(sink, filename, data)` method. This method will write file size
 and checksum information to the archive in the Local File Header rather than using a Data
-Descriptor. The advantage to this method is that you can turn around and open the archive
-using `zipsource`: when streamed for reading, the Local File Header will report the correct
-file size, allowing proper streamed reading of the file data. The disadvantages to using this method
-for writing data are that you need to have all of the data you want to write available at
-one time and that both the raw data and the compressed data need to fit in memory at the
-same time. Here are some examples using this method for writing files:
+Descriptor. The advantage to this method is that files written this way are more efficiently
+read back by a `zipsource`: when streamed for reading, the Local File Header will report the
+correct file size. The disadvantages to using this method for writing data are that you need
+to have all of the data you want to write available at one time and that both the raw data
+and the compressed data need to fit in memory. Here are some examples using
+this method for writing files:
 
 ```julia
 using ZipStreams
@@ -108,12 +108,10 @@ zipsink("new-archive.zip") do sink
     end
 end
 
-try
-    zipsource("new-archive.zip") do source
-        f = next_file(source)  # fails because the size of the file cannot be read from the Local File Header
-    end
-catch e
-    @error "exception caught" exception=e
+
+zipsource("new-archive.zip") do source
+    f = next_file(source)  # works, but is slow to read because the stream has to be checked for a valid Data Descriptor with each read
+    @assert read(f, String) == "Hello, Julia!"
 end
 
 zipsink("new-archive.zip") do sink
@@ -122,7 +120,7 @@ zipsink("new-archive.zip") do sink
 end
 
 zipsource("new-archive.zip") do source
-    f = next_file(source)  # can be streamed with zipsource
+    f = next_file(source)  # is more efficient to read because the file size is known a priori
     @assert read(f, String) == "Hello, Julia!"
 end
 ```

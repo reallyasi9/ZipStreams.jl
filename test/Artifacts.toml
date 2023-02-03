@@ -1,7 +1,7 @@
 [testfiles]
-git-tree-sha1 = "dc4865e3a176dcfb72bf156550752cd9ab57ef9e"
+git-tree-sha1 = "adb597f73e1f77cdf60bed5a82edba24be9c8192"
 lazy = true
 
     [[testfiles.download]]
     url = "https://github.com/reallyasi9/ZipStreams.jl/raw/test-artifacts/test.tar.gz"
-    sha256 = "bde348961b42e9e06975e0fbaaeba00b11b808c7246027778c3dd09018390e3a"
+    sha256 = "349b336241d1a1197c5466a65e133663348e82e7f4f0d65d19ee04121bebea59"

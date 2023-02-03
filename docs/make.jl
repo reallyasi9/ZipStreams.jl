@@ -21,6 +21,7 @@ makedocs(
         "Writing to Sinks" => "sinks.md",
         "Printing Information" => "info.md",
         "Other Operations" => "misc.md",
+        "Pathological Files" => "pathological.md",
     ]
 )
 

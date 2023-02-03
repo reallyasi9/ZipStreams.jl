@@ -1,6 +1,6 @@
 """
     zip_files(out_filename, files; [keyword_args])
-    zip_files(out_filename, dir; recursive=false, [keyword_args])
+    zip_files(out_filename, dir; recurse_directories=false, [keyword_args])
 
 Create an archive from files on disk.
 
@@ -11,8 +11,8 @@ between the current directory (`"."`) and the full path of the file, so if `arch
 is "/a/b/archive.zip" and one of `files` is "/a/c/file", then the file will be witten
 with the path "c/file".
 
-If `dir` is a directory and `recursive` is `true`, then all files and directories found when
-traversing the directory will be added to the archive. If `recursive` is `false` (the
+If `dir` is a directory and `recurse_directories` is `true`, then all files and directories found when
+traversing the directory will be added to the archive. If `recurse_directories` is `false` (the
 default), then subdirectories of `dir` will not be traversed.
 
 All files are written to the archive using the default arguments specified by
@@ -25,9 +25,13 @@ function zip_files(archive_filename::AbstractString, input_filenames::AbstractVe
         for filename in input_filenames
             rpath = relpath(filename) # relative to . by default
             clean_path = strip_dots(rpath)
-            open(filename, "r") do io
-                open(sink, clean_path; make_path=true) do fsink
-                    write(fsink, io)
+            if isdir(filename)
+                mkpath(sink, clean_path)
+            else
+                open(filename, "r") do io
+                    open(sink, clean_path; make_path=true) do fsink
+                        write(fsink, io)
+                    end
                 end
             end
         end
@@ -35,20 +39,11 @@ function zip_files(archive_filename::AbstractString, input_filenames::AbstractVe
     return
 end
 
-function recurse_all_files(path::AbstractString)
-    files = String[]
-    for (root, dirs, files) in walkdir(path)
-        files = joinpath.(Ref(root), files)
-        for dir in dirs
-            append!(files, recurse_all_files(joinpath(root, dir)))
-        end
-    end
-    return files
-end
+recurse_all_files(path::AbstractString) = mapreduce(((root, dirs, files),) -> joinpath.(Ref(root), files), vcat, walkdir(path))
 
-function zip_files(archive_filename::AbstractString, input_filename::AbstractString; recursive::Bool=false, kwargs...)
+function zip_files(archive_filename::AbstractString, input_filename::AbstractString; recurse_directories::Bool=false, kwargs...)
     if isdir(input_filename)
-        if recursive
+        if recurse_directories
             files = recurse_all_files(input_filename)
         else
             files = filter(x -> !isdir(x), readdir(input_filename; join=true))
@@ -56,19 +51,16 @@ function zip_files(archive_filename::AbstractString, input_filename::AbstractStr
     else
         files = [input_filename]
     end
-    zip_archive(archive_filename, files; kwargs...)
+    zip_files(archive_filename, files; kwargs...)
 end
 
 zip_file(archive_filename::AbstractString, input_filename::AbstractString; kwargs...) = zip_files(archive_filename, [input_filename]; kwargs...)
 
 function strip_dots(path::AbstractString)
     first_non_dot_idx = 1
-    dirs = split(path, ZIP_PATH_DELIMITER)
-    for (i, dir) in enumerate(dirs)
-        if dir != "." && dir != ".."
-            first_non_dot_idx = i
-        end
-    end
+    # This takes filesystem paths and not ZIP archive paths, so use splitpath
+    dirs = splitpath(path)
+    first_non_dot_idx = findfirst(dir -> dir != "." && dir != "..", dirs)
     return join(dirs[first_non_dot_idx:end], ZIP_PATH_DELIMITER)
 end
 
@@ -99,9 +91,12 @@ function unzip_files(archive_filename::AbstractString, files::AbstractVector{<:A
             if !isempty(dirs)
                 mkpath(joinpath(output_path, dirs...))
             end
-            open(joinpath(output_path, file.info.name), "w") do io
-                write(io, file)
-            end
+            io = open(joinpath(output_path, file.info.name), "w")
+            write(io, file)
+            close(io)
+            # open(joinpath(output_path, file.info.name), "w") do io
+            #     write(io, file)
+            # end
         end
     end
     return
