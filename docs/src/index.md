@@ -1,6 +1,26 @@
 # ZipStreams
-A Julia package to burn through ZIP archives as fast as possible by ignoring
-standards just a little bit.
+A Julia package to read and write ZIP archives from read-only or write-only streams by
+ignoring standards just a little bit.
+
+## Synopsis
+
+```julia
+using ZipStreams
+
+zipsink("archive.zip") do sink     # context management of sinks with "do" syntax
+    open(sink, "hello.txt") do f   # context management of files with "do" syntax
+        write(f, "Hello, Julia!")  # write just like you write to any IO object
+    end
+end
+
+zipsource("archive.zip") do source   # context management of sources with "do" syntax
+    for f in source                  # iterate through files in an archive
+        println(f.info.name)         # "hello.txt"
+        read_data = read(String, f)  # read just like you read from any IO object
+        println(read_data)           # "Hello, Julia!"
+    end
+end
+```
 
 ## Overview
 > "There are three ways to do things: the right way, the wrong way, and the Max Power way."
@@ -14,7 +34,7 @@ who want to append a file to the archive can overwrite the Central Directory wit
 new file data, then append an updated Central Directory afterward, and nothing
 else in the file has to be touched. Likewise, users who want to delete files in
 the archive only have to change the entries in the Central Directory: readers
-that conform to the _de facto_ standard described in the [PKWARE APPNOTE file](https://pkware.cachefly.net/webdocs/casestudies/APPNOTE.TXT)
+that conform to the standard described in the [PKWARE APPNOTE file](https://pkware.cachefly.net/webdocs/casestudies/APPNOTE.TXT)
 will ignore the files that are no longer listed.
 
 This design choice means that standards-conformant readers like [`ZipFile.jl`](https://github.com/fhs/ZipFile.jl)
@@ -74,7 +94,7 @@ silently break this package.
 
 You have been warned!
 
-## Installation and use
+## Installation
 
 Install via the Julia package manager, `Pkg.add("ZipStreams")`.
 
@@ -95,13 +115,12 @@ throughout type names, function names, and documentation:
 
 - **Sink**: A Sink is an object to which a sequence of bytes can be written. A Sink does not necessarily implement random access or seek operations, nor does it necessarily support read operations.
 
+## Notes
 
-## Notes and aspirations
-
-This package was inspired by frustrations at using more standard ZIP archive
-reader/writers like [`ZipFile.jl`](https://github.com/fhs/ZipFile.jl). That's
-not to say ZipFile.jl is bad--on the contrary, it is _way_ more
-standards-compliant than this package ever intends to be! As you can see from
+This package was inspired by frustrations with using standards-compliant ZIP archive
+reader/writers like [`ZipFile.jl`](https://github.com/fhs/ZipFile.jl) on streams of data
+from a network source. That's not to say ZipFile.jl is bad--on the contrary, it is _way_
+more standards-compliant than this package ever intends to be! As you can see from
 the history of this repository, much of the work here started as a fork of
 that package. Because of that, I am grateful to [Fazlul Shahriar](https://github.com/fhs)
 for programming and making available `ZipFile.jl`.
