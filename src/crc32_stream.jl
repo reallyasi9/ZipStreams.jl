@@ -1,6 +1,8 @@
 using TranscodingStreams
 using CRC32: crc32, unsafe_crc32, ByteArray
 
+const CRC32_INIT = UInt32(0)
+
 """
     CRC32Sink{<:IO}
     CRC32Source{<:IO}
