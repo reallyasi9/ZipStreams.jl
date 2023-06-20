@@ -1,4 +1,5 @@
 using TranscodingStreams
+using CRC32: crc32, unsafe_crc32, ByteArray
 
 """
     CRC32Sink{<:IO}
@@ -80,7 +81,7 @@ for typ = (:CRC32Source, :CRC32Sink)
 
     @eval Base.seek(::$typ) = error("$typ cannot seek")
 
-    @eval crc32(s::$typ) = s.crc32
+    @eval ZipStreams.crc32(s::$typ) = s.crc32
     @eval bytes_seen(s::$typ) = s.bytes_seen
     @eval bytes_in(s::$typ) = stats(s).transcoded_out # note: reversed from codec's meaning
     @eval bytes_out(s::$typ) = stats(s).transcoded_in # note: reversed from codec's meaning
