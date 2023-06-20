@@ -23,7 +23,6 @@ module ZipStreams
 
 export info, next_file, unzip_file, unzip_files, validate, write_file, zipsink, zipsource, zip_file, zip_files
 
-include("crc32.jl")
 include("crc32_stream.jl")
 include("io.jl")
 include("constants.jl")
