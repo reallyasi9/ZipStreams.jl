@@ -123,7 +123,7 @@ import ZipStreams: zipsource, validate, next_file
             zipsource(additional_header) do source
                 f = next_file(source)
                 @test validate(f) == file_content
-                @test_broken false # validate(source) should throw, but EOCD record is not checked yet
+                @test_skip validate(source) # should throw, but EOCD record is not checked yet
             end
         end
     end
