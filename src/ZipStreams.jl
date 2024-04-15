@@ -8,13 +8,22 @@ The ZIP file format is described in
 http://www.pkware.com/documents/casestudies/APPNOTE.TXT
 
 # Example
-The example below opens a ZIP archive and reads back the contents to console.
+The example below creates a ZIP archive, writes a file to it, then opens
+same archive back up and prints the contents of the file to console.
 ```julia
-using ZipFiles
+using ZipStreams
 
-ZipStreams.open("archive.zip") do z
-    for file in z
-        print(read(file, String))
+zipsink("archive.zip") do sink
+    open(sink, "hello.txt") do f
+        write(f, "Hello, Julia!")
+    end
+end
+
+zipsource("archive.zip") do source
+    for f in source
+        println(f.info.name)
+        read_data = read(String, f)
+        println(read_data)
     end
 end
 ```
