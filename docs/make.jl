@@ -14,7 +14,7 @@ DocMeta.setdocmeta!(ZipStreams, :DocTestSetup, :(using ZipStreams); recursive=tr
 makedocs(
     sitename = "ZipStreams",
     format = Documenter.HTML(edit_link = "main"),
-    # modules = [ZipStreams],
+    modules = [ZipStreams],
     pages = [
         "Overview" => "index.md",
         "Reading from Sources" => "sources.md",
