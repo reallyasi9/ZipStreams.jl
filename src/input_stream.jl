@@ -285,7 +285,7 @@ Base.read(zs::ZipArchiveSource, ::Type{UInt8}) = read(zs.source, UInt8)
 Base.unsafe_read(zs::ZipArchiveSource, p::Ptr{UInt8}, nb::UInt64) = unsafe_read(zs.source, p, nb)
 Base.readbytes!(zs::ZipArchiveSource, b::AbstractVector{UInt8}, nb=length(b)) = readbytes!(zs.source, b, nb)
 
-Base.position(zs::ZipArchiveSource) = TranscodingStreams.stats(zs.source).in % UInt64
+Base.position(zs::ZipArchiveSource) = UInt64(position(zs.source))
 bytes_in(zs::ZipArchiveSource) = position(zs)
 
 function Base.skip(zs::ZipArchiveSource, n::Integer)
