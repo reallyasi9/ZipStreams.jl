@@ -50,7 +50,7 @@ close(sink)
 When you read the Archive back, you'll find that the stream reader will read up to the fake
 Data Descriptor that you wrote and ignore the additional data that you wrote afterward:
 
-```jldoctest block1
+```julia block1
 zipsource("pathological.zip") do source
     for zf in source
         println(read(zf, String))
