@@ -89,7 +89,7 @@ mutable struct SentinelLimiter{T<:Integer} <: AbstractLimiter
     # TODO: deal with uncompressed bytes somehow?
 end
 
-function SentinelLimiter(typ::Type{T}, sentinel::AbstractVector{UInt8}) where {T<:Integer}
+function SentinelLimiter(::Type{T}, sentinel::AbstractVector{UInt8}) where {T<:Integer}
     # Implements Knuth-Morris-Pratt failure function computation
     # https://en.wikipedia.org/wiki/Knuth%E2%80%93Morris%E2%80%93Pratt_algorithm
     s = copy(sentinel)
@@ -112,7 +112,12 @@ function SentinelLimiter(typ::Type{T}, sentinel::AbstractVector{UInt8}) where {T
     end
     t[pos] = cnd
 
-    return SentinelLimiter{typ}(s, t, CRC32_INIT, 0)
+    return SentinelLimiter{T}(s, t, CRC32_INIT, 0)
+end
+
+function SentinelLimiter(sentinel::AbstractVector{UInt8})
+    # match machine type
+    return SentinelLimiter(UInt, sentinel)
 end
 
 """
