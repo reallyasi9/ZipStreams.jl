@@ -48,15 +48,11 @@ import ZipStreams: TruncatedSource, UnlimitedLimiter, FixedSizeLimiter, Sentinel
         @test bytesavailable(t) == sizeof(TRUNC_CONTENT) # first sentinel found
         @test bytes_consumed(t) == 0
         @test read(t, bytesavailable(t)) == TRUNC_CONTENT
-        @test bytesavailable(t) == 1 # read only the first byte of the sentinel
-        @test bytes_consumed(t) == sizeof(TRUNC_CONTENT)
-        @test read(t, bytesavailable(t)) == TRUNC_SENTINEL[1:1]
-        @test bytesavailable(t) == sizeof(TRUNC_SENTINEL) + sizeof(TRUNC_CONTENT) - 1
-        @test bytes_consumed(t) == sizeof(TRUNC_CONTENT) + 1
-        @test read(t, bytesavailable(t)) == vcat(TRUNC_SENTINEL[2:end], TRUNC_CONTENT)
-        @test bytesavailable(t) == 0 # found valid sentinel block
-        @test bytes_consumed(t) == CONTENT_LEN
-        @test eof(t) == true
+        @test eof(t)
+        # clear fake sentinel
+        t.limiter.skip = true
+        @test bytesavailable(t) == 8 # remainder of fake sentinel plus hidden content
+        @test eof(t)
     end
 
     @testset "IO interface" begin
@@ -66,7 +62,7 @@ import ZipStreams: TruncatedSource, UnlimitedLimiter, FixedSizeLimiter, Sentinel
             @test eof(t) == false
             @test isreadable(t) == true
             @test iswritable(t) == false
-            @test_throws ErrorException seek(t)
+            @test_throws ErrorException seek(t, 0)
             while !eof(t)
                 read(t)
             end
@@ -90,6 +86,9 @@ import ZipStreams: TruncatedSource, UnlimitedLimiter, FixedSizeLimiter, Sentinel
             @test readbytes!(t, a, 1) == 1
             @test a[1] == TRUNC_CONTENT[end]
 
+            # clear fake sentinel
+            t.limiter.skip = true
+
             # bigly remainder
             resize!(a, 1000)
             n = readbytes!(t, a)
@@ -104,10 +103,12 @@ import ZipStreams: TruncatedSource, UnlimitedLimiter, FixedSizeLimiter, Sentinel
             t = TruncatedSource(SentinelLimiter(TRUNC_SENTINEL), BUFFER)
             a = readavailable(t)
             @test a == TRUNC_CONTENT
+            # a = readavailable(t)
+            # @test a == UInt8[]
+            # clear fake sentinel
+            t.limiter.skip = true
             a = readavailable(t)
-            @test a == TRUNC_SENTINEL[1:1]
-            a = readavailable(t)
-            @test a == vcat(TRUNC_SENTINEL[2:end], TRUNC_CONTENT)
+            @test a == vcat(TRUNC_SENTINEL, TRUNC_CONTENT)
             @test eof(t) == true
             @test readavailable(t) == UInt8[]
         end

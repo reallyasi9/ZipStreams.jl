@@ -21,8 +21,12 @@ mutable struct CRC32Source{S<:IO} <: IO
     crc32::UInt32
     bytes_seen::Int
     stream::S
+
+    mark::Int
+    marked_crc32::UInt32
+    marked_bytes_seen::Int
 end
-CRC32Source(io::IO) = CRC32Source(CRC32_INIT, 0, io)
+CRC32Source(io::IO) = CRC32Source(CRC32_INIT, 0, io, -1, CRC32_INIT, 0)
 
 # optimized for CRC32.jl
 function Base.write(s::CRC32Sink, a::ByteArray)
@@ -102,4 +106,26 @@ Base.peek(s::CRC32Source) = peek(s.stream) # do not update CRC!
 function Base.skip(s::CRC32Source, offset::Integer)
     read(s, offset) # drop on the floor to update CRC
     return nothing
+end
+
+function Base.mark(s::CRC32Source)
+    s.marked_crc32 = s.crc32
+    s.marked_bytes_seen = s.bytes_seen
+    s.mark = mark(s.stream)
+end
+
+function Base.unmark(s::CRC32Source)
+    !ismarked(s) && return false
+    unmark(s.stream)
+    s.mark = -1
+    return true
+end
+
+function Base.reset(s::CRC32Source)
+    ismarked(s) || throw(ArgumentError("CRC32Source not marked"))
+    m = reset(s.stream)
+    s.mark = -1
+    s.bytes_seen = s.marked_bytes_seen
+    s.crc32 = s.marked_crc32
+    return m
 end

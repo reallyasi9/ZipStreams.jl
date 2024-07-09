@@ -10,9 +10,9 @@ A `ZipFileSource` implements `read(zf, UInt8)`, allowing all other basic read
 opperations to treat the object as if it were a file. Information about the
 archived file is stored in the `info` property.
 """
-mutable struct ZipFileSource{S<:TranscodingStream} <: IO
+mutable struct ZipFileSource <: IO
     info::ZipFileInformation
-    source::S
+    source::CRC32Source
 end
 
 # Expected size of the entire file, header and data descriptor included, in bytes
@@ -41,9 +41,10 @@ function zipfilesource(info::ZipFileInformation, io::IO)
     if info.descriptor_follows
         if info.compressed_size != 0
             @warn "Data descriptor signalled in local file header, but size information present as well: data descriptor will be used, but extracted data may be corrupt" info.compressed_size
+        else
+            @warn "Data descriptor signalled in local file header: extracted data may corrupt or truncated"
         end
-        T = info.zip64 ? UInt64 : UInt32
-        limiter = SentinelLimiter(T, htol(bytearray(SIG_DATA_DESCRIPTOR)))
+        limiter = SentinelLimiter(htol(bytearray(SIG_DATA_DESCRIPTOR)))
     else
         limiter = FixedSizeLimiter(info.compressed_size)
     end
@@ -56,7 +57,10 @@ function zipfilesource(info::ZipFileInformation, io::IO)
     else
         error("unsupported compression method $(info.compression_method)")
     end
-    return ZipFileSource(info, source)
+
+    crcstream = CRC32Source(source)
+
+    return ZipFileSource(info, crcstream)
 end
 
 function zipfilesource(f::F, info::ZipFileInformation, io::IO) where {F <: Function}
@@ -72,7 +76,7 @@ in the Local File Header and return the data read.
 
 If the contents of the file do not match the information in the Local File Header, the
 method will throw an error. The method checks that the compressed and uncompressed file
-sizes match what is in the header, and that the CRC-32 of the compressed data matches what
+sizes match what is in the header, and that the CRC-32 of the uncompressed data matches what
 is reported in the header.
 
 This method will return the remainder of the raw file data that has not yet been read from
@@ -134,7 +138,30 @@ function Base.readbytes!(zf::ZipFileSource, a::AbstractVector{UInt8}, nb=length(
     return n
 end
 
-Base.eof(zf::ZipFileSource) = eof(zf.source)
+function Base.eof(zf::ZipFileSource)
+    crc_stream = zf.source
+    if !zf.info.descriptor_follows
+        # just return what the fixed size limiter tells us
+        return eof(crc_stream)
+    end
+    # check if the sentinel was correct
+    raw_stream = crc_stream.stream.stream.stream
+    mark(raw_stream)
+    skip(raw_stream, 4) # skip descriptor header
+    sizeT = zf.info.zip64 ? UInt64 : UInt32
+    try
+        if read(raw_stream, UInt32) == zf.info.crc32 && read(raw_stream, sizeT) == bytes_in(zf) && read(raw_stream, sizeT) == bytes_out(zf)
+            return true
+        else
+            trunc_stream = crc_stream.stream.stream
+            trunc_stream.limiter.skip = true
+            return false
+        end
+    finally
+        reset(raw_stream)
+    end
+end
+
 function Base.seek(::ZipFileSource, ::Integer)
     error("stream cannot seek")
 end
@@ -155,20 +182,12 @@ Base.close(::ZipFileSource) = nothing # Do not close the source!
 Base.position(zf::ZipFileSource) = position(zf.source)
 
 function bytes_in(zf::ZipFileSource)
-    mode = zf.source.state.mode
-    if mode ∈ (:stop, :close)
-        return zf.info.compressed_size
-    end
-    stats = TranscodingStreams.stats(zf.source)
+    stats = TranscodingStreams.stats(zf.source.stream)
     return stats.transcoded_in
 end
 
 function bytes_out(zf::ZipFileSource)
-    mode = zf.source.state.mode
-    if mode ∈ (:stop, :close)
-        return zf.info.uncompressed_size
-    end
-    stats = TranscodingStreams.stats(zf.source)
+    stats = TranscodingStreams.stats(zf.source.stream)
     return stats.transcoded_out
 end
 
