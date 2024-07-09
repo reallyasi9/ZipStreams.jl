@@ -143,22 +143,10 @@ function Base.eof(zf::ZipFileSource)
     if !zf.info.descriptor_follows
         # just return what the fixed size limiter tells us
         return eof(crc_stream)
-    end
-    # check if the sentinel was correct
-    raw_stream = crc_stream.stream.stream.stream
-    mark(raw_stream)
-    skip(raw_stream, 4) # skip descriptor header
-    sizeT = zf.info.zip64 ? UInt64 : UInt32
-    try
-        if read(raw_stream, UInt32) == zf.info.crc32 && read(raw_stream, sizeT) == bytes_in(zf) && read(raw_stream, sizeT) == bytes_out(zf)
-            return true
-        else
-            trunc_stream = crc_stream.stream.stream
-            trunc_stream.limiter.skip = true
-            return false
-        end
-    finally
-        reset(raw_stream)
+    else
+        # check if the sentinel was correct
+        # stream chain is CRC<-Transcoder<-Truncated<-(Raw from ZipArchiveSource)
+        return double_check_eof(crc_stream.stream.stream, crc_stream.crc32, bytes_in(zf), bytes_out(zf))
     end
 end
 

@@ -277,6 +277,11 @@ function zipsink(f::F, fname::AbstractString; kwargs...) where {F<:Function}
     return val
 end
 
+"""
+    close(s::ZipArchiveSink; close_sink::Bool=true)
+
+Close the archive sink, optionally closing the underlying IO object as well.
+"""
 function Base.close(archive::ZipArchiveSink; close_sink::Bool=true)
     if archive._is_closed
         return
@@ -418,6 +423,7 @@ Create a file within a Zip archive and return a handle for writing.
 
 # Keyword arguments
 - `compression::Union{UInt16,Symbol} = :deflate`: Can be one of `:deflate`, `:store`, or the associated codes defined by the Zip archive standard (`0x0008` or `0x0000`, respectively). Determines how the data is compressed when writing to the archive.
+- `level::Integer = $(CodecZlib.Z_DEFAULT_COMPRESSION)`: zlib compression level for `:deflate` compression method, higher values corresponding to better compression and slower compression speed (valid values [-1..9] with -1 corresponding to the default level of 6, ignored if `compression == :store`).
 - `utf8::Bool = true`: If `true`, the file name and comment will be written to the archive metadata encoded in UTF-8 strings, and a flag will be set in the metadata to instruct decompression programs to read these strings as such. If `false`, the default IBM437 encoding will be used. This does not affect the file data itself.
 - `comment::AbstractString = ""`: Comment metadata to add to the archive about the file. This does not affect the file data itself.
 - `make_path::Bool = false`: If `true`, any directories in `fname` will be created first. If `false` and any directory in the path does not exist, an exception will be thrown.
@@ -433,6 +439,7 @@ function Base.open(
     archive::ZipArchiveSink,
     fname::AbstractString;
     compression::Union{Symbol,UInt16} = :deflate,
+    level::Integer = CodecZlib.Z_DEFAULT_COMPRESSION,
     utf8::Bool = true,
     comment::AbstractString = "",
     make_path::Bool = false,
@@ -485,7 +492,7 @@ function Base.open(
     if ccode == COMPRESSION_STORE
         sink = NoopStream(archive)
     elseif ccode == COMPRESSION_DEFLATE
-        sink = DeflateCompressorStream(archive)
+        sink = DeflateCompressorStream(archive; level=level)
     else
         # How did I end up here?
         error("undefined compression type $compression")

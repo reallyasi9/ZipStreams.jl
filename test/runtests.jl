@@ -344,3 +344,39 @@ end
         @test read(file, String) == FILE_CONTENT
     end
 end
+
+@testset "Canterbury Corpus streaming round trips" begin
+    cc_path = artifact"CanterburyCorpus"
+    cc_files = readdir(cc_path; sort=true, join=true) 
+    buffer = IOBuffer()
+    zipsink(buffer) do sink
+        for fn in cc_files
+            @info "writing" sink fn basename(fn)
+            open(sink, basename(fn)) do file
+                open(fn, "r") do io
+                    nb = write(file, io)
+                    @info "wrote" nb
+                end
+            end
+        end
+    end
+        
+    seekstart(buffer)
+
+    zipsource(buffer) do source
+        for fn in cc_files
+            file = next_file(source)
+            @info "reading" source file.info.name fn
+            @test file.info.name == basename(fn)
+            
+            truth = read(fn)
+            content = read(file)
+            @info "testing" length(truth) length(content)
+            @test content == truth
+        end
+    end
+end
+
+@test "Canterbury Corpus compression levels" begin
+    
+end
