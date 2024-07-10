@@ -44,11 +44,10 @@ function zipfilesource(info::ZipFileInformation, io::IO)
         else
             @warn "Data descriptor signalled in local file header: extracted data may corrupt or truncated"
         end
-        limiter = SentinelLimiter(htol(bytearray(SIG_DATA_DESCRIPTOR)))
+        trunc_source = SentinelizedSource(io, htol(bytearray(SIG_DATA_DESCRIPTOR)))
     else
-        limiter = FixedSizeLimiter(info.compressed_size)
+        trunc_source = FixedLengthSource(io, info.compressed_size)
     end
-    trunc_source = TruncatedSource(limiter, io)
 
     if info.compression_method == COMPRESSION_DEFLATE
         source = DeflateDecompressorStream(trunc_source; stop_on_end=true) # the truncator will signal :end to the stream
@@ -285,7 +284,7 @@ function zipsource(f::F, x::AbstractString; kwargs...) where {F<:Function}
 end
 
 for func in (:eof, :isopen, :bytesavailable, :close, :isreadable)
-    @eval Base.$func(s::ZipArchiveSource) = $func(s.source)
+    @eval Base.$func(s::ZipArchiveSource) = Base.$func(s.source)
 end
 
 Base.read(zs::ZipArchiveSource, ::Type{UInt8}) = read(zs.source, UInt8)

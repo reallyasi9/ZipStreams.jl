@@ -26,7 +26,7 @@ function source end
 
 # unary functions
 for func in (:lock, :unlock, :isopen, :close, :closewrite, :flush, :position, :seekstart, :seekend, :mark, :unmark, :reset, :ismarked)
-    @eval Base.$func(s::AbstractTruncatedSource) = $func(source(s))
+    @eval Base.$func(s::AbstractTruncatedSource) = Base.$func(source(s))
 end
 # special unary functions
 Base.iswritable(::AbstractTruncatedSource) = false
@@ -73,7 +73,7 @@ mutable struct SentinelizedSource{S<:IO} <: AbstractTruncatedSource
     failure_function::Vector{Int}
     skip::Bool
 
-    function SentinelizedSource(io::S, sentinel::AbstractVector{UInt8})
+    function SentinelizedSource(io::S, sentinel::AbstractVector{UInt8}) where {S<:IO}
         # Implements Knuth-Morris-Pratt failure function computation
         # https://en.wikipedia.org/wiki/Knuth%E2%80%93Morris%E2%80%93Pratt_algorithm
         s = Vector{UInt8}(sentinel)
@@ -162,7 +162,7 @@ function Base.bytesavailable(s::SentinelizedSource)
     throw(ErrorException("unreachable tail"))
 end
 
-function eof(s::SentinelizedSource)
+function Base.eof(s::SentinelizedSource)
     if eof(source(s))
         return true
     end
@@ -178,7 +178,7 @@ function eof(s::SentinelizedSource)
     end
 end
 
-function reseteof(s::SentinelizedSource)
+function Base.reseteof(s::SentinelizedSource)
     reseteof(source(s))
     s.skip = true
     return nothing

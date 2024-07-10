@@ -82,7 +82,7 @@ end
 # other IO stuff
 for typ = (:CRC32Source, :CRC32Sink)
     for func = (:close, :isopen, :eof, :position, :bytesavailable)
-        @eval Base.$func(s::$typ) = $func(s.stream)
+        @eval Base.$func(s::$typ) = Base.$func(s.stream)
     end
 
     @eval Base.seek(::$typ) = error("$typ cannot seek")
