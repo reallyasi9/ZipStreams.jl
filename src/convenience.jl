@@ -91,12 +91,12 @@ function unzip_files(archive_filename::AbstractString, files::AbstractVector{<:A
             if !isempty(dirs)
                 mkpath(joinpath(output_path, dirs...))
             end
-            io = open(joinpath(output_path, file.info.name), "w")
-            write(io, file)
-            close(io)
-            # open(joinpath(output_path, file.info.name), "w") do io
-            #     write(io, file)
-            # end
+            # io = open(joinpath(output_path, file.info.name), "w")
+            # write(io, file)
+            # close(io)
+            open(joinpath(output_path, file.info.name), "w") do io
+                write(io, file)
+            end
         end
     end
     return

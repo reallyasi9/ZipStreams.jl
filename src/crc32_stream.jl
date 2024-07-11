@@ -66,6 +66,8 @@ function Base.readbytes!(s::CRC32Source, a::AbstractVector{UInt8}, nb::Integer=l
     return n
 end
 
+Base.readavailable(s::CRC32Source) = Base.read(s)
+
 # emulate TranscodingStreams.stats
 for typ = (:CRC32Source, :CRC32Sink)
     # default to using the number of bytes seen
@@ -81,7 +83,7 @@ end
 
 # other IO stuff
 for typ = (:CRC32Source, :CRC32Sink)
-    for func = (:close, :isopen, :eof, :position, :bytesavailable)
+    for func in (:close, :isopen, :eof, :position, :bytesavailable)
         @eval Base.$func(s::$typ) = Base.$func(s.stream)
     end
 

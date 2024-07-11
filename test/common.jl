@@ -61,26 +61,26 @@ Base.close(f::ForwardWriteOnlyIO) = close(f.io)
 Base.isopen(f::ForwardWriteOnlyIO) = isopen(f.io)
 # Base.eof(f::ForwardWriteOnlyIO) = eof(f.io)
 
-struct SlowIO{S <: IO} <: IO
+mutable struct SlowIO{S <: IO} <: IO
     io::S
-    delay_ms::Int
+    delay::Int
+
+    SlowIO(io::S, delay::Integer=1) where {S<:IO} = new{S}(io, delay)
 end
 function Base.unsafe_read(s::SlowIO, p::Ptr{UInt8}, n::UInt)
-    sleep(s.delay_ms/1000.)
-    unsafe_read(s, p, n)
+    sleep(s.delay/1000.)
+    unsafe_read(s.io, p, n)
 end
 function Base.unsafe_write(s::SlowIO, p::Ptr{UInt8}, n::UInt)
-    sleep(s.delay_ms/1000.)
-    unsafe_write(s, p, n)
+    sleep(s.delay/1000.)
+    unsafe_write(s.io, p, n)
 end
-function Base.seek(s::SlowIO, pos::Integer)
-    sleep(s.delay_ms/1000.)
-    seek(s, pos)
-end
-function Base.skip(s::SlowIO, n::Integer)
-    sleep(s.delay_ms/1000.)
-    skip(s, n)
-end
+Base.seek(s::SlowIO, pos::Integer) = seek(s.io, pos)
+Base.skip(s::SlowIO, n::Integer) = skip(s.io, n)
+Base.isopen(f::SlowIO) = isopen(f.io)
+Base.eof(f::SlowIO) = eof(f.io)
+Base.bytesavailable(f::SlowIO) = bytesavailable(f.io)
+Base.position(f::SlowIO) = position(f.io)
 
 # All test files have the same content
 const FILE_CONTENT = "Hello, Julia!\n"

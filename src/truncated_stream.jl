@@ -31,8 +31,22 @@ end
 # special unary functions
 Base.iswritable(::AbstractTruncatedSource) = false
 
+# function Base.readavailable(s::AbstractTruncatedSource)
+#     n = bytesavailable(s)
+#     v = Vector{UInt8}(undefined, n)
+#     readbytes!(source(s), v, n)
+#     return v
+# end
+
 # n-ary functions
 Base.seek(s::AbstractTruncatedSource, n::Integer) = seek(source(s), n)
+Base.unsafe_read(s::AbstractTruncatedSource, p::Ptr{UInt8}, n::UInt) = unsafe_read(source(s), p, n)
+
+function Base.read(s::AbstractTruncatedSource, ::Type{UInt8})
+    r = Ref{UInt8}()
+    unsafe_read(s, r, 1)
+    return r[]
+end
 
 """
     FixedLengthSource(io, length) <: AbstractTruncatedSource
@@ -71,6 +85,7 @@ mutable struct SentinelizedSource{S<:IO} <: AbstractTruncatedSource
     source::S
     sentinel::Vector{UInt8}
     failure_function::Vector{Int}
+    eof::Bool
     skip::Bool
 
     function SentinelizedSource(io::S, sentinel::AbstractVector{UInt8}) where {S<:IO}
@@ -96,7 +111,7 @@ mutable struct SentinelizedSource{S<:IO} <: AbstractTruncatedSource
         end
         t[pos] = cnd
 
-        new{S}(io, s, t, false)
+        new{S}(io, s, t, false, false)
     end
 end
 
@@ -117,7 +132,8 @@ function Base.bytesavailable(s::SentinelizedSource)
     # Implements Knuth-Morris-Pratt with extra logic to deal with the tail of the buffer
     # https://en.wikipedia.org/wiki/Knuth%E2%80%93Morris%E2%80%93Pratt_algorithm
 
-    b_idx = mark(s)
+    mark(s)
+    b_idx = 0
     s_idx = firstindex(s.sentinel)
 
     try
@@ -128,7 +144,7 @@ function Base.bytesavailable(s::SentinelizedSource)
                 return b_idx - s_idx + 1
             end
 
-            r = read(io, UInt8)
+            r = read(s, UInt8)
             n -= 1
 
             if s.sentinel[s_idx] == r
@@ -136,13 +152,15 @@ function Base.bytesavailable(s::SentinelizedSource)
                 # pretend this was not a match and reset the skip flag
                 if s.skip && s_idx == firstindex(s.sentinel)
                     s.skip = false
+                    s.eof = false
                     continue
                 end
                 s_idx += 1
-                b_idx = position(s)
-                if s_idx == lastindex(sentinel) + 1
+                b_idx += 1
+                if s_idx == lastindex(s.sentinel) + 1
                     # sentinel found
                     # can read up until the byte before the sentinel
+                    s.eof = true
                     return b_idx - s_idx + 1
                 end
             else
@@ -150,7 +168,7 @@ function Base.bytesavailable(s::SentinelizedSource)
                 s_idx = s.failure_function[s_idx]
                 if s_idx <= 0
                     # start over
-                    b_idx = position(io)
+                    b_idx += 1
                     s_idx += 1
                 end
             end
@@ -164,23 +182,17 @@ end
 
 function Base.eof(s::SentinelizedSource)
     if eof(source(s))
-        return true
-    end
-    if s.skip
+        s.eof = true
+    elseif s.skip
         return false
     end
-    mark(s)
-    try
-        check = similar(s.sentinel)
-        return readbytes!(s, check, length(s.sentinel)) == length(s.sentinel) && check == s.sentinel
-    finally
-        reset(s)
-    end
+    return s.eof
 end
 
 function Base.reseteof(s::SentinelizedSource)
-    reseteof(source(s))
+    Base.reseteof(source(s))
     s.skip = true
+    s.eof = false
     return nothing
 end
 

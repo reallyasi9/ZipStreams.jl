@@ -40,9 +40,9 @@ end
 function zipfilesource(info::ZipFileInformation, io::IO)
     if info.descriptor_follows
         if info.compressed_size != 0
-            @warn "Data descriptor signalled in local file header, but size information present as well: data descriptor will be used, but extracted data may be corrupt" info.compressed_size
+            @warn "Data descriptor signalled in local file header, but size information present as well: data descriptor will be used, but extracted data may be corrupt" info.compressed_size maxlog=3
         else
-            @warn "Data descriptor signalled in local file header: extracted data may corrupt or truncated"
+            @warn "Data descriptor signalled in local file header: extracted data may corrupt or truncated" maxlog=3
         end
         trunc_source = SentinelizedSource(io, htol(bytearray(SIG_DATA_DESCRIPTOR)))
     else
@@ -138,14 +138,46 @@ function Base.readbytes!(zf::ZipFileSource, a::AbstractVector{UInt8}, nb=length(
 end
 
 function Base.eof(zf::ZipFileSource)
+    # stream chain is CRC<-Transcoder<-Truncated<-(Raw from ZipArchiveSource)
     crc_stream = zf.source
+    e = eof(crc_stream)
     if !zf.info.descriptor_follows
         # just return what the fixed size limiter tells us
-        return eof(crc_stream)
-    else
-        # check if the sentinel was correct
-        # stream chain is CRC<-Transcoder<-Truncated<-(Raw from ZipArchiveSource)
-        return double_check_eof(crc_stream.stream.stream, crc_stream.crc32, bytes_in(zf), bytes_out(zf))
+        return e
+    end
+    # no false negatives with the sentinel
+    if !e
+        return false
+    end
+
+    # check if the sentinel was correct
+    trunc_stream = crc_stream.stream.stream
+    raw_stream = source(trunc_stream)
+    double_check = double_check_eof(raw_stream, crc_stream.crc32, bytes_in(zf), bytes_out(zf), zf.info.zip64)
+    if !double_check
+        Base.reseteof(trunc_stream)
+        return false
+    end
+    return true
+
+end
+
+function double_check_eof(s::IO, crc::UInt32, cbytes::Integer, ubytes::Integer, zip64::Bool)
+    mark(s)
+    try
+        # skip the header
+        skip(s, 4)
+        # read three values in a row and check
+        T = zip64 ? UInt64 : UInt32
+        return readle(s, UInt32) == crc && readle(s, T) == cbytes && readle(s, T) == ubytes
+    catch e
+        if isa(e, EOFError)
+            return false
+        else
+            throw(e)
+        end
+    finally
+        reset(s)
     end
 end
 
