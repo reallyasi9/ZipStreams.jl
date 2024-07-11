@@ -25,10 +25,10 @@ end
 
     buffer = IOBuffer()
     archive = zipsink(buffer)
-    f = open(archive, "hello.txt"; compression = :store)
+    f = open(archive, "hello.txt"; compression=:store)
     @test write(f, FILE_CONTENT) == 14
     close(f)
-    close(archive; close_sink = false)
+    close(archive; close_sink=false)
 
     readme = IOBuffer(take!(buffer))
     skip(readme, 4)
@@ -48,10 +48,10 @@ end
 
     buffer = IOBuffer()
     archive = zipsink(buffer)
-    f = open(archive, "hello.txt"; compression = :deflate)
+    f = open(archive, "hello.txt"; compression=:deflate)
     @test write(f, FILE_CONTENT) == 14
     close(f)
-    close(archive; close_sink = false)
+    close(archive; close_sink=false)
 
     readme = IOBuffer(take!(buffer))
     skip(readme, 4)
@@ -70,7 +70,7 @@ end
     buffer = IOBuffer()
     archive = zipsink(buffer)
     @test_throws ArgumentError open(archive, "subdir/hello.txt")
-    @test_throws ArgumentError open(archive, "subdir/hello.txt"; make_path = false)
+    @test_throws ArgumentError open(archive, "subdir/hello.txt"; make_path=false)
     close(archive)
 end
 @testitem "Write input archive files: single file, subdirectory (make_path=true)" tags =
@@ -79,7 +79,7 @@ end
 
     buffer = IOBuffer()
     archive = zipsink(buffer)
-    f = open(archive, "subdir/hello.txt"; make_path = true)
+    f = open(archive, "subdir/hello.txt"; make_path=true)
     write(f, FILE_CONTENT)
     close(f)
     close(archive)
@@ -91,7 +91,7 @@ end
     buffer = IOBuffer()
     archive = zipsink(buffer)
     write_file(archive, "hello.txt", FILE_CONTENT)
-    close(archive; close_sink = false)
+    close(archive; close_sink=false)
 
     readme = IOBuffer(take!(buffer))
     skip(readme, 4)
@@ -220,7 +220,7 @@ end
     wo = ForwardWriteOnlyIO(buffer)
     sink = zipsink(wo)
     write_file(sink, "hello.txt", FILE_CONTENT)
-    close(sink; close_sink = false)
+    close(sink; close_sink=false)
 
     seekstart(buffer)
     ro = ForwardReadOnlyIO(buffer)
@@ -262,161 +262,195 @@ end
     end
 end
 
-@testitem "unzip_files one file in subdir" tags = [:source, :sink] begin
+@testitem "unzip_files one file in subdir" tags = [:utils] begin
     include("common.jl")
-    
+
     multi_file = test_file_name(true, true, false, false, false, false, "multi")
 
     mktempdir() do tdir
         filename = "subdir/hello.txt"
-        unzip_files(multi_file, filename; output_path = tdir, make_path = true)
+        unzip_files(multi_file, filename; output_path=tdir, make_path=true)
         @test isfile(joinpath(tdir, filename))
         @test read(joinpath(tdir, filename), String) == FILE_CONTENT
     end
 end
-#         @testset "File list" begin
-#             mktempdir() do tdir
-#                 filenames = ["hello.txt", "subdir/hello.txt"]
-#                 unzip_files(multi_file, filenames; output_path=tdir, make_path=true)
-#                 for filename in filenames
-#                     @test isfile(joinpath(tdir, filename))
-#                     @test read(joinpath(tdir, filename), String) == FILE_CONTENT
-#                 end
-#             end
-#         end
-#         @testset "All files" begin
-#             mktempdir() do tdir
-#                 filenames = ["hello.txt", "subdir/hello.txt"]
-#                 unzip_files(multi_file; output_path=tdir, make_path=true)
-#                 for filename in filenames
-#                     @test isfile(joinpath(tdir, filename))
-#                     @test read(joinpath(tdir, filename), String) == FILE_CONTENT
-#                 end
-#             end
-#         end
-#     end
-#     @testset "Zip back up with zip_files" begin
-#         multi_file = test_file_name(true, true, false, false, false, false, "multi")
-#         mktempdir() do tdir
-#             unzip_files(multi_file; output_path=tdir, make_path=true)
 
-#             @testset "One file in subdir" begin
-#                 mktemp() do path, io
-#                     filename = "subdir/hello.txt"
-#                     zip_files(path, joinpath(tdir, filename))
-#                     zipsource(path) do source
-#                         f = next_file(source)
-#                         expected_path = join([ZipStreams.strip_dots(relpath(tdir)), filename], ZipStreams.ZIP_PATH_DELIMITER)
-#                         @test f.info.name == expected_path # zip_files _does_ recreate the path within the ZIP archive
-#                         @test read(f, String) == FILE_CONTENT
-#                     end
-#                 end
-#             end
+@testitem "unzip_files file list" tags = [:utils] begin
+    include("common.jl")
 
-#             @testset "File list" begin
-#                 mktemp() do path, io
-#                     filenames = ["hello.txt", "subdir/hello.txt"]
-#                     zip_files(path, joinpath.(Ref(tdir), filenames))
-#                     zipsource(path) do source
-#                         for (f, filename) in zip(source, filenames)
-#                             expected_path = join([ZipStreams.strip_dots(relpath(tdir)), filename], ZipStreams.ZIP_PATH_DELIMITER)
-#                             @test f.info.name == expected_path # zip_files _does_ recreate the path within the ZIP archive
-#                             @test read(f, String) == FILE_CONTENT
-#                         end
-#                     end
-#                 end
-#             end
+    multi_file = test_file_name(true, true, false, false, false, false, "multi")
 
-#             @testset "Entire directory" begin
-#                 @testset "No recurse directories (default)" begin
-#                     mktemp() do path, io
-#                         filenames = ["hello.txt"]
-#                         zip_files(path, tdir)
-#                         zipsource(path) do archive
-#                             for (f, filename) in zip(archive, filenames)
-#                                 expected_path = join([ZipStreams.strip_dots(relpath(tdir)), filename], ZipStreams.ZIP_PATH_DELIMITER)
-#                                 @test f.info.name == expected_path
-#                                 @test read(f, String) == FILE_CONTENT
-#                             end
-#                         end
-#                     end
-#                 end
-#                 @testset "Recurse directories" begin
-#                     mktemp() do path, io
-#                         filenames = ["hello.txt", "subdir/hello.txt"]
-#                         zip_files(path, tdir; recurse_directories=true)
-#                         zipsource(path) do archive
-#                             for (f, filename) in zip(archive, filenames)
-#                                 expected_path = join([ZipStreams.strip_dots(relpath(tdir)), filename], ZipStreams.ZIP_PATH_DELIMITER)
-#                                 @test f.info.name == expected_path
-#                                 @test read(f, String) == FILE_CONTENT
-#                             end
-#                         end
-#                     end
-#                 end
-#             end
-#         end
-#     end
-# end
+    mktempdir() do tdir
+        filenames = ["hello.txt", "subdir/hello.txt"]
+        unzip_files(multi_file, filenames; output_path=tdir, make_path=true)
+        for filename in filenames
+            @test isfile(joinpath(tdir, filename))
+            @test read(joinpath(tdir, filename), String) == FILE_CONTENT
+        end
+    end
+end
 
-# @testset "Round trip" begin
-#     buffer = IOBuffer()
-#     zipsink(buffer) do sink
-#         open(sink, "hello.txt") do file
-#             write(file, FILE_CONTENT)
-#         end
-#         open(sink, "subdir/hello_again.txt"; compression=:store, make_path=true) do file
-#             write(file, FILE_CONTENT)
-#         end
-#     end
+@testitem "unzip_files all files" tags = [:utils] begin
+    include("common.jl")
 
-#     seekstart(buffer)
+    multi_file = test_file_name(true, true, false, false, false, false, "multi")
 
-#     zipsource(buffer) do source
-#         file = next_file(source)
-#         @test file.info.name == "hello.txt"
-#         @test file.info.descriptor_follows == true
-#         @test read(file, String) == FILE_CONTENT
+    mktempdir() do tdir
+        filenames = ["hello.txt", "subdir/hello.txt"]
+        unzip_files(multi_file; output_path=tdir, make_path=true)
+        for filename in filenames
+            @test isfile(joinpath(tdir, filename))
+            @test read(joinpath(tdir, filename), String) == FILE_CONTENT
+        end
+    end
+end
 
-#         file = next_file(source)
+@testitem "zip_files one file in subdir" tags = [:utils] begin
+    include("common.jl")
 
-#         @test file.info.name == "subdir/hello_again.txt"
-#         @test file.info.descriptor_follows == true
-#         @test read(file, String) == FILE_CONTENT
-#     end
-# end
+    multi_file = test_file_name(true, true, false, false, false, false, "multi")
 
-# @testset "Canterbury Corpus streaming round trips" begin
-#     cc_path = artifact"CanterburyCorpus"
-#     cc_files = readdir(cc_path; sort=true, join=true)
-#     buffer = IOBuffer()
-#     zipsink(buffer) do sink
-#         for fn in cc_files
-#             @info "writing" sink fn basename(fn)
-#             open(sink, basename(fn)) do file
-#                 open(fn, "r") do io
-#                     nb = write(file, io)
-#                     @info "wrote" nb
-#                 end
-#             end
-#         end
-#     end
+    mktempdir() do tdir
+        unzip_files(multi_file; output_path=tdir, make_path=true)
 
-#     seekstart(buffer)
+        mktemp() do path, io
+            filename = "subdir/hello.txt"
+            zip_files(path, joinpath(tdir, filename))
+            zipsource(path) do source
+                f = next_file(source)
+                expected_path = join([ZipStreams.strip_dots(relpath(tdir)), filename], ZipStreams.ZIP_PATH_DELIMITER)
+                @test f.info.name == expected_path # zip_files _does_ recreate the path within the ZIP archive
+                @test read(f, String) == FILE_CONTENT
+            end
+        end
+    end
+end
 
-#     zipsource(buffer) do source
-#         for fn in cc_files
-#             file = next_file(source)
-#             @info "reading" source file.info.name fn
-#             @test file.info.name == basename(fn)
+@testitem "zip_files file list" tags = [:utils] begin
+    include("common.jl")
 
-#             truth = read(fn)
-#             content = read(file)
-#             @info "testing" length(truth) length(content)
-#             @test content == truth
-#         end
-#     end
-# end
+    multi_file = test_file_name(true, true, false, false, false, false, "multi")
+
+    mktempdir() do tdir
+        unzip_files(multi_file; output_path=tdir, make_path=true)
+        mktemp() do path, io
+            filenames = ["hello.txt", "subdir/hello.txt"]
+            zip_files(path, joinpath.(Ref(tdir), filenames))
+            zipsource(path) do source
+                for (f, filename) in zip(source, filenames)
+                    expected_path = join([ZipStreams.strip_dots(relpath(tdir)), filename], ZipStreams.ZIP_PATH_DELIMITER)
+                    @test f.info.name == expected_path # zip_files _does_ recreate the path within the ZIP archive
+                    @test read(f, String) == FILE_CONTENT
+                end
+            end
+        end
+    end
+end
+
+@testitem "zip_files entire directory, no recurse (default)" tags = [:utils] begin
+    include("common.jl")
+
+    multi_file = test_file_name(true, true, false, false, false, false, "multi")
+
+    mktempdir() do tdir
+        unzip_files(multi_file; output_path=tdir, make_path=true)
+        mktemp() do path, io
+            filenames = ["hello.txt"]
+            zip_files(path, tdir)
+            zipsource(path) do archive
+                for (f, filename) in zip(archive, filenames)
+                    expected_path = join([ZipStreams.strip_dots(relpath(tdir)), filename], ZipStreams.ZIP_PATH_DELIMITER)
+                    @test f.info.name == expected_path
+                    @test read(f, String) == FILE_CONTENT
+                end
+            end
+        end
+    end
+end
+
+@testitem "zip_files entire directory, recurse" tags = [:utils] begin
+    include("common.jl")
+
+    multi_file = test_file_name(true, true, false, false, false, false, "multi")
+
+    mktempdir() do tdir
+        unzip_files(multi_file; output_path=tdir, make_path=true)
+        mktemp() do path, io
+            filenames = ["hello.txt", "subdir/hello.txt"]
+            zip_files(path, tdir; recurse_directories=true)
+            zipsource(path) do archive
+                for (f, filename) in zip(archive, filenames)
+                    expected_path = join([ZipStreams.strip_dots(relpath(tdir)), filename], ZipStreams.ZIP_PATH_DELIMITER)
+                    @test f.info.name == expected_path
+                    @test read(f, String) == FILE_CONTENT
+                end
+            end
+        end
+    end
+end
+
+@testitem "Round trip" tags = [:sink, :source] begin
+    include("common.jl")
+
+    buffer = IOBuffer()
+    zipsink(buffer) do sink
+        open(sink, "hello.txt") do file
+            write(file, FILE_CONTENT)
+        end
+        open(sink, "subdir/hello_again.txt"; compression=:store, make_path=true) do file
+            write(file, FILE_CONTENT)
+        end
+    end
+
+    seekstart(buffer)
+
+    zipsource(buffer) do source
+        file = next_file(source)
+        @test file.info.name == "hello.txt"
+        @test file.info.descriptor_follows == true
+        @test read(file, String) == FILE_CONTENT
+
+        file = next_file(source)
+
+        @test file.info.name == "subdir/hello_again.txt"
+        @test file.info.descriptor_follows == true
+        @test read(file, String) == FILE_CONTENT
+    end
+end
+
+@testitem "Canterbury Corpus streaming round trips" tags = [:sink, :source] begin
+    include("common.jl")
+
+    cc_path = artifact"CanterburyCorpus"
+    cc_files = readdir(cc_path; sort=true, join=true)
+    buffer = IOBuffer()
+    zipsink(buffer) do sink
+        for fn in cc_files
+            @info "writing" sink fn basename(fn)
+            open(sink, basename(fn)) do file
+                open(fn, "r") do io
+                    nb = write(file, io)
+                    @info "wrote" nb
+                end
+            end
+        end
+    end
+
+    seekstart(buffer)
+
+    zipsource(buffer) do source
+        for fn in cc_files
+            file = next_file(source)
+            @info "reading" source file.info.name fn
+            @test file.info.name == basename(fn)
+
+            truth = read(fn)
+            content = read(file)
+            @info "testing" length(truth) length(content)
+            @test content == truth
+        end
+    end
+end
 
 # @test "Canterbury Corpus compression levels" begin
 

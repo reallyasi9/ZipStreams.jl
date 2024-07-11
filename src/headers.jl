@@ -570,7 +570,7 @@ function _is_consistent(lhs::ZipFileInformation, rhs::ZipFileInformation)
     rhs.utf8 == lhs.utf8 || return false
     
     # some fields are dependent on the data descriptor flag
-    (rhs.descriptor_follows || lhs.descriptor_follows) && return true
+    rhs.descriptor_follows == lhs.descriptor_follows || return false
 
     rhs.uncompressed_size == lhs.uncompressed_size || return false
     rhs.compressed_size == lhs.compressed_size || return false
