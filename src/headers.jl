@@ -562,7 +562,7 @@ function Base.write(
 end
 
 # Check if a CentralDirectoryHeader is consistent with a given LocalFileHeader's info
-function _is_consistent(lhs::ZipFileInformation, rhs::ZipFileInformation)
+function is_consistent(lhs::ZipFileInformation, rhs::ZipFileInformation; check_sizes::Bool=true)
     # some fields have to always match
     rhs.compression_method == lhs.compression_method || return false
     rhs.last_modified == lhs.last_modified || return false
@@ -572,6 +572,10 @@ function _is_consistent(lhs::ZipFileInformation, rhs::ZipFileInformation)
     # some fields are dependent on the data descriptor flag
     rhs.descriptor_follows == lhs.descriptor_follows || return false
 
+    # these fields might not be set yet if consistency is being checked before read is complete
+    if rhs.descriptor_follows && !check_sizes
+        return true
+    end
     rhs.uncompressed_size == lhs.uncompressed_size || return false
     rhs.compressed_size == lhs.compressed_size || return false
     rhs.crc32 == lhs.crc32 || return false
@@ -579,6 +583,12 @@ function _is_consistent(lhs::ZipFileInformation, rhs::ZipFileInformation)
     # other fields don't matter
     return true
 end
+
+# deal with refs in either position
+is_consistent(lhs::Ref, rhs::Ref; kwargs...) = is_consistent(lhs[], rhs[]; kwargs...)
+is_consistent(lhs::Ref, rhs; kwargs...) = is_consistent(lhs[], rhs; kwargs...)
+is_consistent(lhs, rhs::Ref; kwargs...) = is_consistent(lhs, rhs[]; kwargs...)
+
 
 function _write_zip64_eocd_record(io::IO, entries::UInt64, nbytes::UInt64, offset::UInt64)
     nb = writele(io, SIG_ZIP64_END_OF_CENTRAL_DIRECTORY)

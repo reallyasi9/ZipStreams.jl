@@ -84,17 +84,14 @@ function unzip_files(archive_filename::AbstractString, files::AbstractVector{<:A
     files_to_extract = Set(files)
     zipsource(archive_filename) do source
         for file in source
-            if !isempty(files_to_extract) && file.info.name ∉ files_to_extract
+            if !isempty(files_to_extract) && file_info(file).name ∉ files_to_extract
                 continue
             end
-            dirs = split(file.info.name, ZIP_PATH_DELIMITER)[1:end-1]
+            dirs = split(file_info(file).name, ZIP_PATH_DELIMITER)[1:end-1]
             if !isempty(dirs)
                 mkpath(joinpath(output_path, dirs...))
             end
-            # io = open(joinpath(output_path, file.info.name), "w")
-            # write(io, file)
-            # close(io)
-            open(joinpath(output_path, file.info.name), "w") do io
+            open(joinpath(output_path, file_info(file).name), "w") do io
                 write(io, file)
             end
         end

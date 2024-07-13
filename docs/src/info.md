@@ -5,7 +5,7 @@ CurrentModule = ZipStreams
 ```
 
 You can print information about a ZIP archive or a file within a ZIP archive to the terminal
-(or any `IO` object) with the `info` method. The format of the information displayed for
+(or any `IO` object) with the `print_info` method. The format of the information displayed for
 each file is similar to the short format produced by [`ZipInfo`](https://linux.die.net/man/1/zipinfo).
 In general, the output has the following format:
 
@@ -29,7 +29,7 @@ so far is printed in archive order, along with status information about how much
 read from the archive so far, whether or not the EOF has been reached, and statistics about
 the number and size of the entries.
 
-The first call to `info` in this example reports nothing has been read yet:
+The first call to `print_info` in this example reports nothing has been read yet:
 
 ```@meta
 DocTestFilters = [r"\d{2}-[A-Z][a-z]{2}-\d{2} \d{2}:\d{2}:\d{2}"]
@@ -46,7 +46,7 @@ end
 
 seekstart(buffer)
 zipsource(buffer) do source
-    info(source)
+    print_info(source)
 end
 
 # output
@@ -54,14 +54,14 @@ end
 ZIP archive source stream data after reading 0 B, number of entries: 0
 ```
 
-After reading all of the data in the archive using `vialidate`, a call to `info` reports
+After reading all of the data in the archive using `vialidate`, a call to `print_info` reports
 information about the entities read:
 
 ```jldoctest info1
 seekstart(buffer)
 zipsource(buffer) do source
     validate(source)
-    info(source)
+    print_info(source)
 end
 
 # output
@@ -79,5 +79,5 @@ DocTestFilters = nothing
 
 ## API
 ```@docs
-info
+print_info
 ```

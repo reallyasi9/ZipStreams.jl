@@ -3,7 +3,7 @@ using Dates
 using LazyArtifacts
 using ZipStreams
 
-function file_info(; name::AbstractString="hello.txt", descriptor::Bool=false, utf8::Bool=false, zip64::Bool=false, datetime::DateTime=DateTime(2022, 8, 18, 23, 21, 38), compression::UInt16=ZipStreams.COMPRESSION_STORE)
+function make_file_info(; name::AbstractString="hello.txt", descriptor::Bool=false, utf8::Bool=false, zip64::Bool=false, datetime::DateTime=DateTime(2022, 8, 18, 23, 21, 38), compression::UInt16=ZipStreams.COMPRESSION_STORE)
     uc_size = 13 % UInt64
     if compression == ZipStreams.COMPRESSION_DEFLATE
         c_size = 15 % UInt64
@@ -26,7 +26,7 @@ function file_info(; name::AbstractString="hello.txt", descriptor::Bool=false, u
         zip64,
     )
 end
-function subdir_info(; name::AbstractString="subdir/", datetime::DateTime=DateTime(2020, 8, 18, 23, 21, 38), utf8::Bool=false, zip64::Bool=false)
+function make_subdir_info(; name::AbstractString="subdir/", datetime::DateTime=DateTime(2020, 8, 18, 23, 21, 38), utf8::Bool=false, zip64::Bool=false)
     return ZipStreams.ZipFileInformation(
         ZipStreams.COMPRESSION_STORE,
         0,

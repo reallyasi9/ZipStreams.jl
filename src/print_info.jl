@@ -1,11 +1,11 @@
 using Printf
 
 """
-    info([io::IO = stdout], zip)
+    print_info([io::IO = stdout], zip)
 
 Print information about a ZIP archive or file stream.
 """
-function info(io::IO, za::ZipArchiveSource)
+function print_info(io::IO, za::ZipArchiveSource)
     print(io, "ZIP archive source stream data after reading ", human_readable_bytes(bytes_in(za)))
     if eof(za)
         print(io, " (EOF reached)")
@@ -18,7 +18,7 @@ function info(io::IO, za::ZipArchiveSource)
         total_uc = 0
         total_c = 0
         for entry in za.directory
-            info(io, entry)
+            print_info(io, entry)
             println(io)
             total_uc += entry.uncompressed_size
             total_c += entry.compressed_size
@@ -39,7 +39,7 @@ function info(io::IO, za::ZipArchiveSource)
     return 
 end
 
-info(za::ZipArchiveSource) = info(stdout, za)
+print_info(za::ZipArchiveSource) = print_info(stdout, za)
 
 # Info-ZIP project, see ftp://ftp.info-zip.org/pub/infozip/license.html
 const COMPRESSION_INFO_FORMAT = String[
@@ -62,7 +62,7 @@ const COMPRESSION_INFO_FORMAT = String[
     "ppmd",
     "????",
 ]
-function info(io::IO, zi::ZipFileInformation)
+function print_info(io::IO, zi::ZipFileInformation)
     # TODO: status bits: drwxahs or drwxrwxrwx
     # all: directory, readable, writable, executable
     # windows: archive, hidden, system
@@ -106,8 +106,8 @@ function info(io::IO, zi::ZipFileInformation)
     # name with directory info
     print(io, zi.name)
 end
-info(zi::ZipFileInformation) = info(stdout, zi)
-info(io::IO, zf::ZipFileSource) = info(io, zf.info)
-info(zf::ZipFileSource) = info(stdout, zf)
-info(io::IO, zf::ZipFileSink) = info(io, zf.info)
-info(zf::ZipFileSink) = info(stdout, zf)
+print_info(zi::ZipFileInformation) = print_info(stdout, zi)
+print_info(io::IO, zf::ZipFileSource) = print_info(io, zf.info)
+print_info(zf::ZipFileSource) = print_info(stdout, zf)
+print_info(io::IO, zf::ZipFileSink) = print_info(io, zf.info)
+print_info(zf::ZipFileSink) = print_info(stdout, zf)
