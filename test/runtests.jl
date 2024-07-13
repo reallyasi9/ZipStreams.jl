@@ -130,11 +130,11 @@ end
         false:true,
     )
         archive_name = test_file_name(deflate, dd, local64, utf8, cd64, eocd64)
-        file_info = test_file_info(deflate, dd, local64, utf8)
+        fi = test_file_info(deflate, dd, local64, utf8)
         zipsource(archive_name) do archive
             f = next_file(archive)
             @test !isnothing(f)
-            @test ZipStreams._is_consistent(f.info, file_info)
+            @test ZipStreams.is_consistent(file_info(f), fi; check_sizes=false)
             f = next_file(archive)
             @test isnothing(f)
         end
@@ -150,10 +150,10 @@ end
     zipsource(multi_file) do archive
         f = next_file(archive)
         @test !isnothing(f)
-        @test ZipStreams._is_consistent(f.info, first_file_info)
+        @test ZipStreams.is_consistent(file_info(f), first_file_info; check_sizes=false)
         f = next_file(archive)
         @test !isnothing(f)
-        @test ZipStreams._is_consistent(f.info, second_file_info)
+        @test ZipStreams.is_consistent(file_info(f), second_file_info; check_sizes=false)
         @test isnothing(next_file(archive))
     end
 end
@@ -183,11 +183,11 @@ end
         false:true,
     )
         archive_name = test_file_name(deflate, dd, local64, utf8, cd64, eocd64)
-        file_info = test_file_info(deflate, dd, local64, utf8)
+        fi = test_file_info(deflate, dd, local64, utf8)
 
         zipsource(archive_name) do archive
             for f in archive
-                ZipStreams._is_consistent(f.info, file_info)
+                @test ZipStreams.is_consistent(file_info(f), fi; check_sizes=false)
             end
             @test isnothing(next_file(archive))
         end
@@ -206,7 +206,7 @@ end
 
     zipsource(multi_file) do archive
         for (i, f) in zip(file_infos, archive)
-            @test ZipStreams._is_consistent(f.info, i)
+            @test ZipStreams.is_consistent(file_info(f), i; check_sizes=false)
         end
         @test isnothing(next_file(archive))
     end
@@ -319,7 +319,7 @@ end
             zipsource(path) do source
                 f = next_file(source)
                 expected_path = join([ZipStreams.strip_dots(relpath(tdir)), filename], ZipStreams.ZIP_PATH_DELIMITER)
-                @test f.info.name == expected_path # zip_files _does_ recreate the path within the ZIP archive
+                @test file_info(f).name == expected_path # zip_files _does_ recreate the path within the ZIP archive
                 @test read(f, String) == FILE_CONTENT
             end
         end
@@ -339,7 +339,7 @@ end
             zipsource(path) do source
                 for (f, filename) in zip(source, filenames)
                     expected_path = join([ZipStreams.strip_dots(relpath(tdir)), filename], ZipStreams.ZIP_PATH_DELIMITER)
-                    @test f.info.name == expected_path # zip_files _does_ recreate the path within the ZIP archive
+                    @test file_info(f).name == expected_path # zip_files _does_ recreate the path within the ZIP archive
                     @test read(f, String) == FILE_CONTENT
                 end
             end
@@ -360,7 +360,7 @@ end
             zipsource(path) do archive
                 for (f, filename) in zip(archive, filenames)
                     expected_path = join([ZipStreams.strip_dots(relpath(tdir)), filename], ZipStreams.ZIP_PATH_DELIMITER)
-                    @test f.info.name == expected_path
+                    @test file_info(f).name == expected_path
                     @test read(f, String) == FILE_CONTENT
                 end
             end
@@ -381,7 +381,7 @@ end
             zipsource(path) do archive
                 for (f, filename) in zip(archive, filenames)
                     expected_path = join([ZipStreams.strip_dots(relpath(tdir)), filename], ZipStreams.ZIP_PATH_DELIMITER)
-                    @test f.info.name == expected_path
+                    @test file_info(f).name == expected_path
                     @test read(f, String) == FILE_CONTENT
                 end
             end
@@ -406,14 +406,14 @@ end
 
     zipsource(buffer) do source
         file = next_file(source)
-        @test file.info.name == "hello.txt"
-        @test file.info.descriptor_follows == true
+        @test file_info(file).name == "hello.txt"
+        @test file_info(file).descriptor_follows == true
         @test read(file, String) == FILE_CONTENT
 
         file = next_file(source)
 
-        @test file.info.name == "subdir/hello_again.txt"
-        @test file.info.descriptor_follows == true
+        @test file_info(file).name == "subdir/hello_again.txt"
+        @test file_info(file).descriptor_follows == true
         @test read(file, String) == FILE_CONTENT
     end
 end
@@ -441,8 +441,8 @@ end
     zipsource(buffer) do source
         for fn in cc_files
             file = next_file(source)
-            @info "reading" source file.info.name fn
-            @test file.info.name == basename(fn)
+            @info "reading" source file_info(file).name fn
+            @test file_info(file).name == basename(fn)
 
             truth = read(fn)
             content = read(file)

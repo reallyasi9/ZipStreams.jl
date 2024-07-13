@@ -72,13 +72,12 @@ mutable struct ZipFileSink{S<:CRC32Sink,R<:ZipArchiveSink} <: AbstractZipFileSin
 
     # for writing data to the parent archive on close
     _raw_sink::R
-    _crc32::UInt32
     # don't close twice
     _closed::Bool
 end
 
 function Base.show(io::IO, zf::ZipFileSink)
-    info = zf.info
+    info = file_info(zf)
     fname = info.name
     compression = compression_name(info.compression_method)
     csize = bytes_out(zf)
@@ -92,6 +91,15 @@ function Base.show(io::IO, zf::ZipFileSink)
     print(io, "ZipFileSink(<$fname> $compression $size_string written$eof_string)")
     return
 end
+
+"""
+    file_info(zipfile)
+
+Return a ZipFileInformation object describing the file.
+
+See: [ZipFileInformation](@ref) for details.
+"""
+file_info(zf::ZipFileSink) = zf.info
 
 """
     close(zipoutfile)
@@ -116,21 +124,22 @@ function Base.close(
     crc = crc32(zipfile.sink)
     c_size = bytes_in(zipfile)
     uc_size = bytes_out(zipfile)
+    fi = file_info(zipfile)
     # FIXME: Not atomic!
     # NOTE: not standard per se, but more common than not to use a signature here.
-    if zipfile.info.descriptor_follows
+    if fi.descriptor_follows
         writele(zipfile._raw_sink, SIG_DATA_DESCRIPTOR)
         writele(zipfile._raw_sink, crc)
         # Force Zip64 no matter the actual sizes
         writele(zipfile._raw_sink, c_size)
         writele(zipfile._raw_sink, uc_size)
     else
-        if crc != zipfile.info.crc32
-            error("file data written to archive does not match local header data: expected CRC-32 $(zipfile.info.crc32), got $crc")
-        elseif c_size != zipfile.info.compressed_size
-            error("file data written to archive does not match local header data: expected compressed size $(zipfile.info.compressed_size), got $c_size")
-        elseif uc_size != zipfile.info.uncompressed_size
-            error("file data written to archive does not match local header data: expected uncompressed size $(zipfile.info.uncompressed_size), got $uc_size")
+        if crc != fi.crc32
+            error("file data written to archive does not match local header data: expected CRC-32 $(fi.crc32), got $crc")
+        elseif c_size != fi.compressed_size
+            error("file data written to archive does not match local header data: expected compressed size $(fi.compressed_size), got $c_size")
+        elseif uc_size != fi.uncompressed_size
+            error("file data written to archive does not match local header data: expected uncompressed size $(fi.uncompressed_size), got $uc_size")
         end
     end
 
@@ -138,15 +147,15 @@ function Base.close(
     zip64 = zipfile.offset >= typemax(UInt32) || c_size >= typemax(UInt32) || uc_size >= typemax(UInt32)
     extra = zip64 ? 0 : 20
     directory_info = ZipFileInformation(
-        zipfile.info.compression_method,
+        file_info(zipfile).compression_method,
         uc_size,
         c_size,
         now(),
         crc,
         extra,
-        zipfile.info.name,
+        file_info(zipfile).name,
         true,
-        zipfile.info.utf8,
+        file_info(zipfile).utf8,
         zip64,
     )
     push!(
@@ -506,7 +515,6 @@ function Base.open(
         comment,
         offset,
         archive,
-        CRC32_INIT,
         false,
     )
 

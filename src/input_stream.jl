@@ -72,6 +72,15 @@ function zipfilesource(f::F, info::ZipFileInformation, io::IO) where {F <: Funct
 end
 
 """
+    file_info(zipfile)
+
+Return a ZipFileInformation object describing the file.
+
+See: [ZipFileInformation](@ref) for details.
+"""
+file_info(z::ZipFileSource) = z.info[]
+
+"""
     validate(zf::ZipFileSource)
 
 Validate that the contents read from an archived file match the information stored
@@ -392,7 +401,8 @@ function validate(zs::ZipArchiveSource)
     for (i, lf_info_ref) in enumerate(zs.directory)
         ncd += 1
         cd_info = read(zs.source, CentralDirectoryHeader)
-        if !_is_consistent(cd_info.info, lf_info_ref[])
+        # read is complete, so size information should be filled in
+        if !is_consistent(cd_info.info, lf_info_ref; check_sizes=true)
             error("discrepancy detected in central directory entry $i: expected $(lf_info_ref[]), got $(cd_info.info)")
         end
         if cd_info.offset != zs.offsets[i]
