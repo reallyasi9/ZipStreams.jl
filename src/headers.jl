@@ -565,7 +565,8 @@ end
 function is_consistent(lhs::ZipFileInformation, rhs::ZipFileInformation; check_sizes::Bool=true)
     # some fields have to always match
     rhs.compression_method == lhs.compression_method || return false
-    rhs.last_modified == lhs.last_modified || return false
+    # modified time may have been read in MS-DOS format, meaning the best resolution it can muster is 2 seconds
+    floor(abs(rhs.last_modified - lhs.last_modified), Second) < Second(2) || return false
     rhs.name == lhs.name || return false
     rhs.utf8 == lhs.utf8 || return false
     
