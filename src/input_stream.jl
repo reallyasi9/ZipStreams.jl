@@ -368,9 +368,6 @@ function Base.skip(zs::ZipArchiveSource, n::Integer)
     read(zs.source, n)
     return
 end
-function Base.seek(::ZipArchiveSource, ::Integer)
-    error("stream cannot seek")
-end
 
 Base.iswritable(::ZipArchiveSource) = false
 
@@ -410,7 +407,7 @@ function validate(zs::ZipArchiveSource)
         end
         # If this isn't the end of the file, skip the signature bytes
         if !eof(zs.source)
-            skip(zs.source, length(SIG_CENTRAL_DIRECTORY))
+            skip(zs.source, sizeof(SIG_CENTRAL_DIRECTORY))
         end
     end
     if ncd != length(zs.directory)
@@ -418,7 +415,7 @@ function validate(zs::ZipArchiveSource)
     end
     # TODO: validate EOCD record(s)
     # Until then, just read to EOF
-    seekend(zs)
+    read(zs)
     return filedata
 end
 """
