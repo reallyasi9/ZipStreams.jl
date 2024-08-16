@@ -82,27 +82,24 @@ See: [ZipFileInformation](@ref) for details.
 file_info(z::ZipFileSource) = z.info[]
 
 """
-    validate(zf::ZipFileSource)
+    validate(zf::ZipFileSource) -> Nothing
 
 Validate that the contents read from an archived file match the information stored
-in the Local File Header and return the data read.
+in the Local File Header.
 
 If the contents of the file do not match the information in the Local File Header, the
 method will throw an error. The method checks that the compressed and uncompressed file
-sizes match what is in the header, and that the CRC-32 of the uncompressed data matches what
+sizes match what is in the header and that the CRC-32 of the uncompressed data matches what
 is reported in the header.
 
-This method will return the remainder of the raw file data that has not yet been read from
-the archive as a `Vector{UInt8}`.
+Validation will work even on files that have been partially read.
 """
 function validate(zf::ZipFileSource)
     # read the remainder of the file
-    data = read(zf)
+    read(zf)
     if !eof(zf)
-        throw("expected EOF not reached")
+        error("EOF not reached in file $(info(zf).name)")
     end
-    # FIXME The limiter checks if the Data Descriptor's compressed size is valid for what
-    # has been read, but the uncompressed size cannot (yet) be checked on compressed files.
 
     i = zf.info[]
     if i.descriptor_follows
@@ -124,28 +121,20 @@ function validate(zf::ZipFileSource)
             i.zip64,
         )
         @debug "validation succeeded"
-        return data
+        return nothing
     end
 
-    badcrc = zf.source.crc32 != i.crc32
-    badcom = bytes_in(zf) != i.compressed_size
-    badunc = bytes_out(zf) != i.uncompressed_size
-
-    if badcom
-        @error "Compressed size check failed: expected $(i.compressed_size), got $(bytes_in(zf))"
+    if bytes_in(zf) != i.compressed_size
+        error("Compressed size check failed: expected $(i.compressed_size), got $(bytes_in(zf))")
     end
-    if badunc
-        @error "Uncompressed size check failed: expected $(i.uncompressed_size), got $(bytes_out(zf))"
+    if bytes_out(zf) != i.uncompressed_size
+        error("Uncompressed size check failed: expected $(i.uncompressed_size), got $(bytes_out(zf))")
     end
-    if badcrc
-        @error "CRC-32 check failed: expected $(string(i.crc32; base=16)), got $(string(zf.source.crc32; base=16))"
+    if zf.source.crc32 != i.crc32
+        error("CRC-32 check failed: expected $(string(i.crc32; base=16)), got $(string(zf.source.crc32; base=16))")
     end
-    if badcom || badunc || badcrc
-        error("validation failed")
-    else
-        @debug "validation succeeded"
-    end
-    return data
+    @debug "validation succeeded"
+    return nothing
 end
 
 function Base.read(zf::ZipFileSource, ::Type{UInt8}) 
@@ -371,51 +360,81 @@ end
 Base.iswritable(::ZipArchiveSource) = false
 
 """
-    validate(source::ZipArchiveSource)
+    validate(source::ZipArchiveSource) -> Nothing
 
 Validate the files in the archive `source` against the Central Directory at the end of
-the archive and return all data read as a vector of byte vectors (one per file).
+the archive.
 
 This method consumes _all_ the remaining data in the source stream of `source` and throws an
-exception if the file information read does not match the information in the Central
-Directory. Files that have already been consumed prior to calling this method will still
-be validated, even if their contents are not returned.
+exception if the file information from the file headers read does not match the information
+in the Central Directory. Files that have already been consumed prior to calling this method
+will still be validated.
 
 See also [`validate(::ZipFileSource)`](@ref).
 """
 function validate(zs::ZipArchiveSource)
     # validate remaining files
-    filedata = Vector{Vector{UInt8}}()
     for file in zs
-        push!(filedata, validate(file))
+        validate(file)
     end
 
-    # Guaranteed to be after the last local header found,
-    # maybe after the central directory?
+    # Guaranteed to be after the last local header found.
     # Read off the directory contents and check what was found.
-    ncd = 0
-    for (i, lf_info_ref) in enumerate(zs.directory)
-        ncd += 1
-        cd_info = read(zs.source, CentralDirectoryHeader)
-        # read is complete, so size information should be filled in
-        if !is_consistent(cd_info.info, lf_info_ref; check_sizes=true)
-            error("discrepancy detected in central directory entry $i: expected $(lf_info_ref[]), got $(cd_info.info)")
+    # Central directory entries are not necessary in the same order as the files in the
+    # archive, so we need to match on name and offset
+    headers_by_name = Dict{String, CentralDirectoryHeader}()
+    headers_by_offset = Dict{UInt64, CentralDirectoryHeader}()
+    
+    # read headers until we're done
+    bytes_read = SIG_CENTRAL_DIRECTORY
+    while !eof(zs.source) && bytes_read == SIG_CENTRAL_DIRECTORY
+        try
+            cd_info = read(zs.source, CentralDirectoryHeader)
+            if cd_info.offset in keys(headers_by_offset)
+                error("central directory contains multiple entries with the same offset: $(cd_info) would override $(headers_by_offset[cd_info.offset])")
+            end
+            if cd_info.info.name in keys(headers_by_name)
+                error("central directory contains multiple entries with the same file name: $(cd_info) would override $(headers_by_name[cd_info.info.name])")
+            end
+            headers_by_offset[cd_info.offset] = cd_info
+            headers_by_name[cd_info.info.name] = cd_info
+        catch e
+            if typeof(e) == EOFError
+                # assume this is the end of the directory
+                break
+            else
+                throw(e)
+            end
         end
-        if cd_info.offset != zs.offsets[i]
-            error("discrepancy detected in central directory offset $i: expected $(zs.offsets[i]), got $(cd_info.offset)")
-        end
-        # If this isn't the end of the file, skip the signature bytes
-        if !eof(zs.source)
-            skip(zs.source, sizeof(SIG_CENTRAL_DIRECTORY))
-        end
+        bytes_read = readle(zs.source, UInt32)
     end
-    if ncd != length(zs.directory)
-        error("discrepancy detected in number of central directory entries: expected $ncd, got $(length(zs.directory))")
+
+    # need to check for repeated names in the local headers
+    names_read = Set{String}()
+    for (lf_offset, lf_info_ref) in zip(zs.offsets, zs.directory)
+        if lf_offset ∉ keys(headers_by_offset)
+            error("file at offset $lf_offset not in central directory: $(lf_info_ref[])")
+        end
+        if lf_info_ref[].name in names_read
+            error("multiple files with name $(lf_info_ref[].name) read")
+        end
+        cd_info = headers_by_offset[lf_offset]
+        if !is_consistent(cd_info.info, lf_info_ref; check_sizes=true)
+            error("discrepancy detected in file at offset $lf_offset: central directory reports $(cd_info.info), local file header reports $(lf_info_ref[])")
+        end
+        # delete headers from the central directory dict to check for duplicates or missing files
+        delete!(headers_by_offset, lf_offset)
+        push!(names_read, lf_info_ref[].name)
+    end
+    # Report if there are files we didn't read
+    if !isempty(headers_by_offset)
+        missing_file_infos = join(string.(values(sort(headers_by_offset))))
+        error("files present in central directory but not read: $missing_file_infos")
     end
     # TODO: validate EOCD record(s)
     # Until then, just read to EOF
     read(zs)
-    return filedata
+    return nothing
 end
 """
     iterate(zs::ZipArchiveSource)
