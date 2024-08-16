@@ -1,4 +1,5 @@
 using TranscodingStreams
+using TruncatedStreams
 using CodecZlib
 
 """
@@ -46,9 +47,9 @@ function zipfilesource(info::Ref{ZipFileInformation}, io::IO)
         else
             @warn "Data descriptor signalled in local file header: extracted data may corrupt or truncated" maxlog=3
         end
-        trunc_source = SentinelizedSource(io, htol(bytearray(SIG_DATA_DESCRIPTOR)))
+        trunc_source = SentinelIO(io, htol(bytearray(SIG_DATA_DESCRIPTOR)))
     else
-        trunc_source = FixedLengthSource(io, info[].compressed_size)
+        trunc_source = FixedLengthIO(io, info[].compressed_size)
     end
 
     if info[].compression_method == COMPRESSION_DEFLATE
@@ -197,11 +198,9 @@ end
 
 function read_data_descriptor(::Type{T}, zf::ZipFileSource) where {T <: Unsigned}
     # stream chain is CRC<-Transcoder<-Truncated<-(Raw from ZipArchiveSource)
-    raw_stream = source(zf.source.stream.stream) # .stream.stream.stream.stream...
+    raw_stream = TruncatedStreams.unwrap(zf.source.stream.stream) # .stream.stream.stream.stream...
     mark(raw_stream)
     try
-        # skip the header
-        skip(raw_stream, 4)
         # read three values in a row
         return readle(raw_stream, UInt32), readle(raw_stream, T), readle(raw_stream, T), true
     catch e

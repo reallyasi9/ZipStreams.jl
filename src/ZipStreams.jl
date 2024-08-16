@@ -45,7 +45,6 @@ export print_info,
 include("crc32_stream.jl")
 include("io.jl")
 include("constants.jl")
-include("truncated_stream.jl")
 include("headers.jl")
 include("input_stream.jl")
 include("output_stream.jl")
