@@ -318,7 +318,7 @@ end
             zip_files(path, joinpath(tdir, filename))
             zipsource(path) do source
                 f = next_file(source)
-                expected_path = join([ZipStreams.strip_dots(relpath(tdir)), filename], ZipStreams.ZIP_PATH_DELIMITER)
+                expected_path = join([ZipStreams.strip_dots(relpath(normpath(realpath(tdir)), normpath(pwd()))), filename], ZipStreams.ZIP_PATH_DELIMITER)
                 @test file_info(f).name == expected_path # zip_files _does_ recreate the path within the ZIP archive
                 @test read(f, String) == FILE_CONTENT
             end
@@ -338,7 +338,7 @@ end
             zip_files(path, joinpath.(Ref(tdir), filenames))
             zipsource(path) do source
                 for (f, filename) in zip(source, filenames)
-                    expected_path = join([ZipStreams.strip_dots(relpath(tdir)), filename], ZipStreams.ZIP_PATH_DELIMITER)
+                    expected_path = join([ZipStreams.strip_dots(relpath(normpath(realpath(tdir)), normpath(pwd()))), filename], ZipStreams.ZIP_PATH_DELIMITER)
                     @test file_info(f).name == expected_path # zip_files _does_ recreate the path within the ZIP archive
                     @test read(f, String) == FILE_CONTENT
                 end
@@ -359,7 +359,7 @@ end
             zip_files(path, tdir)
             zipsource(path) do archive
                 for (f, filename) in zip(archive, filenames)
-                    expected_path = join([ZipStreams.strip_dots(relpath(tdir)), filename], ZipStreams.ZIP_PATH_DELIMITER)
+                    expected_path = join([ZipStreams.strip_dots(relpath(normpath(realpath(tdir)), normpath(pwd()))), filename], ZipStreams.ZIP_PATH_DELIMITER)
                     @test file_info(f).name == expected_path
                     @test read(f, String) == FILE_CONTENT
                 end
@@ -380,7 +380,7 @@ end
             zip_files(path, tdir; recurse_directories=true)
             zipsource(path) do archive
                 for (f, filename) in zip(archive, filenames)
-                    expected_path = join([ZipStreams.strip_dots(relpath(tdir)), filename], ZipStreams.ZIP_PATH_DELIMITER)
+                    expected_path = join([ZipStreams.strip_dots(relpath(normpath(realpath(tdir)), normpath(pwd()))), filename], ZipStreams.ZIP_PATH_DELIMITER)
                     @test file_info(f).name == expected_path
                     @test read(f, String) == FILE_CONTENT
                 end

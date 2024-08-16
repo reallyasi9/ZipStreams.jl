@@ -23,7 +23,10 @@ See [`zipsink`](@ref) for more information about the optional keyword arguments.
 function zip_files(archive_filename::AbstractString, input_filenames::AbstractVector{<:AbstractString}; kwargs...)
     zipsink(archive_filename; kwargs...) do sink
         for filename in input_filenames
-            rpath = relpath(filename) # relative to . by default
+            # note: relpath treats path elements with different casing as different, even on case-insensitive filesystems
+            # this can be a problem if, e.g., tempdir() and pwd() return path elements with different cases
+            # so we have to make sure to normalize the paths
+            rpath = relpath(normpath(realpath(filename)), normpath(pwd()))
             clean_path = strip_dots(rpath)
             if isdir(filename)
                 mkpath(sink, clean_path)
