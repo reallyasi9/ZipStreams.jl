@@ -21,7 +21,7 @@ end
 
 zipsource("archive.zip") do source
     for f in source
-        println(file_info(f).name)
+        println(info(f).name)
         read_data = read(String, f)
         println(read_data)
     end
@@ -30,8 +30,7 @@ end
 """
 module ZipStreams
 
-export print_info,
-    file_info,
+export info,
     next_file,
     unzip_file,
     unzip_files,
@@ -48,7 +47,7 @@ include("constants.jl")
 include("headers.jl")
 include("input_stream.jl")
 include("output_stream.jl")
-include("print_info.jl")
+include("validate.jl")
 include("convenience.jl")
 
 end # module

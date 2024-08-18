@@ -77,11 +77,11 @@ mutable struct ZipFileSink{S<:CRC32Sink,R<:ZipArchiveSink} <: AbstractZipFileSin
 end
 
 function Base.show(io::IO, zf::ZipFileSink)
-    info = file_info(zf)
-    fname = info.name
-    compression = compression_name(info.compression_method)
+    i = info(zf)
+    fname = i.name
+    compression = compression_name(i.compression_method)
     csize = bytes_out(zf)
-    if info.compression_method == compression_code(:store)
+    if i.compression_method == compression_code(:store)
         size_string = human_readable_bytes(csize)
     else
         usize = bytes_in(zf)
@@ -93,13 +93,13 @@ function Base.show(io::IO, zf::ZipFileSink)
 end
 
 """
-    file_info(zipfile)
+    info(zipfile)
 
 Return a ZipFileInformation object describing the file.
 
 See: [ZipFileInformation](@ref) for details.
 """
-file_info(zf::ZipFileSink) = zf.info
+info(zf::ZipFileSink) = zf.info
 
 """
     close(zipoutfile)
@@ -124,7 +124,7 @@ function Base.close(
     crc = crc32(zipfile.sink)
     c_size = bytes_in(zipfile)
     uc_size = bytes_out(zipfile)
-    fi = file_info(zipfile)
+    fi = info(zipfile)
     # FIXME: Not atomic!
     # NOTE: not standard per se, but more common than not to use a signature here.
     if fi.descriptor_follows
@@ -147,15 +147,15 @@ function Base.close(
     zip64 = zipfile.offset >= typemax(UInt32) || c_size >= typemax(UInt32) || uc_size >= typemax(UInt32)
     extra = zip64 ? 0 : 20
     directory_info = ZipFileInformation(
-        file_info(zipfile).compression_method,
+        info(zipfile).compression_method,
         uc_size,
         c_size,
         now(),
         crc,
         extra,
-        file_info(zipfile).name,
+        info(zipfile).name,
         true,
-        file_info(zipfile).utf8,
+        info(zipfile).utf8,
         zip64,
     )
     push!(
