@@ -12,11 +12,13 @@ uncompressed data matches what is reported in the header.
 
 Validation will work even on files that have been partially read.
 """
-function validate(zf::ZipFileSource)
+function is_valid(zf::ZipFileSource)
+    good = true
     # read the remainder of the file
     write(devnull, zf)
     if !eof(zf)
-        error("EOF not reached in file $(info(zf).name)")
+        good = false
+        @error "EOF not reached"
     end
 
     i = zf.info[]
@@ -38,47 +40,50 @@ function validate(zf::ZipFileSource)
             i.utf8,
             i.zip64,
         )
-        @debug "validation succeeded"
-        return nothing
+        return good
     end
 
     if bytes_in(zf) != i.compressed_size
-        error("Compressed size check failed: expected $(i.compressed_size), got $(bytes_in(zf))")
+        @error "Compressed size check failed" local_header=i.compressed_size read=bytes_in(zf)
+        good = false
     end
     if bytes_out(zf) != i.uncompressed_size
-        error("Uncompressed size check failed: expected $(i.uncompressed_size), got $(bytes_out(zf))")
+        @error "Uncompressed size check failed" local_header=i.uncompressed_size read=bytes_out(zf)
+        good = false
     end
     if zf.source.crc32 != i.crc32
-        error("CRC-32 check failed: expected $(string(i.crc32; base=16)), got $(string(zf.source.crc32; base=16))")
+        @error "CRC-32 check failed" local_header=string(i.crc32; base=16) read=string(zf.source.crc32; base=16)
+        good = false
     end
-    @debug "validation succeeded"
-    return nothing
+    return good
 end
 
 
 """
-    validate(source::ZipArchiveSource) -> Nothing
+    is_valid(source::ZipArchiveSource) -> Bool
 
 Validate the files in the archive `source` against the Central Directory at the end of
 the archive.
 
-This method consumes _all_ the remaining data in the source stream of `source` and throws an
-exception if the file information from the file headers read does not match the information
+This method consumes _all_ the remaining data in the source stream of `source` and returns
+`false` if the file information from the file headers read does not match the information
 in the Central Directory. Files that have already been consumed prior to calling this method
-will still be validated.
+will still be validated, but the local headers of those files will _not_ be validated against the
+local data that has already been consumed.
 
 !!! warning "Files using descriptors"
     If a file stored within `source` uses a File Descriptor rather than storing the size of the file
     in the Local File Header, the file must be read to the end in order to properly record the
     lengths for checking against the Central Directory. Failure to read such a file to the end will
-    result in an error being thrown when `validate` is called on the archive.
+    result in `is_valid` returning `false` when called on the archive.
 
-See also [`validate(::ZipFileSource)`](@ref).
+See also [`is_valid(::ZipFileSource)`](@ref).
 """
-function validate(zs::ZipArchiveSource)
+function is_valid(zs::ZipArchiveSource)
+    good = true
     # validate remaining files
     for file in zs
-        validate(file)
+        good &= is_valid(file)
     end
 
     # Guaranteed to be after the last local header found.
@@ -94,10 +99,12 @@ function validate(zs::ZipArchiveSource)
         try
             cd_info = read(zs.source, CentralDirectoryHeader)
             if cd_info.offset in keys(headers_by_offset)
-                error("central directory contains multiple entries with the same offset: $(cd_info) would override $(headers_by_offset[cd_info.offset])")
+                good = false
+                @error "Central directory contains multiple entries with the same offset" offset=cd_info.offset first_header=headers_by_offset[cd_info.offset] second_header=cd_info
             end
             if cd_info.info.name in keys(headers_by_name)
-                error("central directory contains multiple entries with the same file name: $(cd_info) would override $(headers_by_name[cd_info.info.name])")
+                good = false
+                @error "Central directory contains multiple entries with the same file name" file_name=cd_info.info.name first_header=headers_by_name[cd_info.info.name] second_header=cd_info
             end
             headers_by_offset[cd_info.offset] = cd_info
             headers_by_name[cd_info.info.name] = cd_info
@@ -116,26 +123,30 @@ function validate(zs::ZipArchiveSource)
     names_read = Set{String}()
     for (lf_offset, lf_info_ref) in zip(zs.offsets, zs.directory)
         if lf_offset ∉ keys(headers_by_offset)
-            error("file at offset $lf_offset not in central directory: $(lf_info_ref[])")
+            good = false
+            @error "File not found in central directory" offset=lf_offset local_header=lf_info_ref[]
+        else
+            cd_info = headers_by_offset[lf_offset]
+            if !is_consistent(cd_info.info, lf_info_ref; check_sizes=true)
+                good = false
+                @error "Local file header is inconsistent with central directory header" offset=lf_offset central_directory_header=cd_info.info local_file_header=lf_info_ref[]
+            end
+            # delete headers from the central directory dict to check for duplicates or missing files
+            delete!(headers_by_offset, lf_offset)
         end
         if lf_info_ref[].name in names_read
-            error("multiple files with name $(lf_info_ref[].name) read")
+            good = false
+            @error "Multiple files have the same name" name=lf_info_ref[].name local_header=lf_info_ref[]
         end
-        cd_info = headers_by_offset[lf_offset]
-        if !is_consistent(cd_info.info, lf_info_ref; check_sizes=true)
-            error("discrepancy detected in file at offset $lf_offset: central directory reports $(cd_info.info), local file header reports $(lf_info_ref[])")
-        end
-        # delete headers from the central directory dict to check for duplicates or missing files
-        delete!(headers_by_offset, lf_offset)
         push!(names_read, lf_info_ref[].name)
     end
     # Report if there are files we didn't read
     if !isempty(headers_by_offset)
-        missing_file_infos = join(string.(values(sort(headers_by_offset))))
-        error("files present in central directory but not read: $missing_file_infos")
+        good = false
+        @error "Central directory headers present that do not match local headers" missing_headers=values(sort(headers_by_offset))
     end
     # TODO: validate EOCD record(s)
     # Until then, just read to EOF
     write(devnull, zs)
-    return nothing
+    return good
 end
