@@ -1,7 +1,9 @@
 using CodecZlib
+using Dates
+using LazyArtifacts
 using ZipStreams
 
-function file_info(; name::AbstractString="hello.txt", descriptor::Bool=false, utf8::Bool=false, zip64::Bool=false, datetime::DateTime=DateTime(2022, 8, 18, 23, 21, 38), compression::UInt16=ZipStreams.COMPRESSION_STORE)
+function make_file_info(; name::AbstractString="hello.txt", descriptor::Bool=false, utf8::Bool=false, zip64::Bool=false, datetime::DateTime=DateTime(2022, 8, 18, 23, 21, 38), compression::UInt16=ZipStreams.COMPRESSION_STORE)
     uc_size = 13 % UInt64
     if compression == ZipStreams.COMPRESSION_DEFLATE
         c_size = 15 % UInt64
@@ -24,7 +26,7 @@ function file_info(; name::AbstractString="hello.txt", descriptor::Bool=false, u
         zip64,
     )
 end
-function subdir_info(; name::AbstractString="subdir/", datetime::DateTime=DateTime(2020, 8, 18, 23, 21, 38), utf8::Bool=false, zip64::Bool=false)
+function make_subdir_info(; name::AbstractString="subdir/", datetime::DateTime=DateTime(2020, 8, 18, 23, 21, 38), utf8::Bool=false, zip64::Bool=false)
     return ZipStreams.ZipFileInformation(
         ZipStreams.COMPRESSION_STORE,
         0,
@@ -41,9 +43,10 @@ end
 struct ForwardReadOnlyIO{S <: IO} <: IO
     io::S
 end
-Base.read(f::ForwardReadOnlyIO, ::Type{UInt8}) = read(f.io, UInt8)
+Base.unsafe_read(f::ForwardReadOnlyIO, p::Ptr{UInt8}, n::UInt) = unsafe_read(f.io, p, n)
 # Base.unsafe_read(f::ForwardReadOnlyIO, p::Ptr{UInt8}, n::UInt) = unsafe_read(f.io, p, n)
-Base.skip(f::ForwardReadOnlyIO, n::Int) = n < 0 ? error("backward skipping forbidden") : skip(f.io, n)
+Base.skip(f::ForwardReadOnlyIO, n::Integer) = n < 0 ? error("backward skipping forbidden") : skip(f.io, n)
+Base.seek(f::ForwardReadOnlyIO, pos::Integer) = pos < position(f) ? error("backward seeking forbidden") : seek(f.io, pos)
 Base.close(f::ForwardReadOnlyIO) = close(f.io)
 Base.isopen(f::ForwardReadOnlyIO) = isopen(f.io)
 Base.eof(f::ForwardReadOnlyIO) = eof(f.io)
@@ -57,6 +60,27 @@ Base.unsafe_write(f::ForwardWriteOnlyIO, p::Ptr{UInt8}, n::UInt) = unsafe_write(
 Base.close(f::ForwardWriteOnlyIO) = close(f.io)
 Base.isopen(f::ForwardWriteOnlyIO) = isopen(f.io)
 # Base.eof(f::ForwardWriteOnlyIO) = eof(f.io)
+
+mutable struct SlowIO{S <: IO} <: IO
+    io::S
+    delay::Int
+
+    SlowIO(io::S, delay::Integer=1) where {S<:IO} = new{S}(io, delay)
+end
+function Base.unsafe_read(s::SlowIO, p::Ptr{UInt8}, n::UInt)
+    sleep(s.delay/1000.)
+    unsafe_read(s.io, p, n)
+end
+function Base.unsafe_write(s::SlowIO, p::Ptr{UInt8}, n::UInt)
+    sleep(s.delay/1000.)
+    unsafe_write(s.io, p, n)
+end
+Base.seek(s::SlowIO, pos::Integer) = seek(s.io, pos)
+Base.skip(s::SlowIO, n::Integer) = skip(s.io, n)
+Base.isopen(f::SlowIO) = isopen(f.io)
+Base.eof(f::SlowIO) = eof(f.io)
+Base.bytesavailable(f::SlowIO) = bytesavailable(f.io)
+Base.position(f::SlowIO) = position(f.io)
 
 # All test files have the same content
 const FILE_CONTENT = "Hello, Julia!\n"

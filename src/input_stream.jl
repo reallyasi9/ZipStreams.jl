@@ -1,5 +1,7 @@
 using TranscodingStreams
+using TruncatedStreams
 using CodecZlib
+using Printf
 
 """
     ZipFileSource
@@ -10,54 +12,61 @@ A `ZipFileSource` implements `read(zf, UInt8)`, allowing all other basic read
 opperations to treat the object as if it were a file. Information about the
 archived file is stored in the `info` property.
 """
-mutable struct ZipFileSource{S<:TranscodingStream} <: IO
-    info::ZipFileInformation
-    source::S
+struct ZipFileSource <: IO
+    info::Ref{ZipFileInformation}
+    source::CRC32Source
 end
 
 # Expected size of the entire file, header and data descriptor included, in bytes
 function Base.sizeof(zf::ZipFileSource)
-    extra = !zf.info.descriptor_follows ? 0 : zf.info.zip64 ? 24 : 16
-    return sizeof(zf.info) + zf.info.compressed_size + extra
+    i = zf.info[]
+    extra = !i.descriptor_follows ? 0 : i.zip64 ? 24 : 16
+    return sizeof(i) + i.compressed_size + extra
 end
 
 # TODO: make data descriptor files a little prettier than 0/0 bytes expected
 function Base.show(io::IO, zf::ZipFileSource)
-    fname = zf.info.name
-    csize = zf.info.compressed_size
-    usize = zf.info.uncompressed_size
+    i = zf.info[]
+    fname = i.name
+    csize = i.compressed_size
+    usize = i.uncompressed_size
     cread = bytes_in(zf)
     uread = bytes_out(zf)
 
     size_string = human_readable_bytes(uread, usize)
-    if zf.info.compression_method != COMPRESSION_STORE
+    if i.compression_method != COMPRESSION_STORE
         size_string *= " ($(human_readable_bytes(cread, csize)) compressed)"
     end
     print(io, "ZipFileSource(<$fname> $size_string consumed)")
     return
 end
 
-function zipfilesource(info::ZipFileInformation, io::IO)
-    if info.descriptor_follows
-        if info.compressed_size != 0
-            @warn "Data descriptor signalled in local file header, but size information present as well: data descriptor will be used, but extracted data may be corrupt" info.compressed_size
+function zipfilesource(info::Ref{ZipFileInformation}, io::IO)
+    if info[].descriptor_follows
+        if info[].compressed_size != 0
+            @warn "Data descriptor signalled in local file header, but size information present as well: data descriptor will be used, but extracted data may be corrupt" info.compressed_size maxlog=3
+        else
+            @warn "Data descriptor signalled in local file header: extracted data may corrupt or truncated" maxlog=3
         end
-        T = info.zip64 ? UInt64 : UInt32
-        limiter = SentinelLimiter(T, htol(bytearray(SIG_DATA_DESCRIPTOR)))
+        trunc_source = SentinelIO(io, htol(bytearray(SIG_DATA_DESCRIPTOR)))
     else
-        limiter = FixedSizeLimiter(info.compressed_size)
+        trunc_source = FixedLengthIO(io, info[].compressed_size)
     end
-    trunc_source = TruncatedSource(limiter, io)
 
-    if info.compression_method == COMPRESSION_DEFLATE
+    if info[].compression_method == COMPRESSION_DEFLATE
         source = DeflateDecompressorStream(trunc_source; stop_on_end=true) # the truncator will signal :end to the stream
-    elseif info.compression_method == COMPRESSION_STORE
+    elseif info[].compression_method == COMPRESSION_STORE
         source = NoopStream(trunc_source)
     else
-        error("unsupported compression method $(info.compression_method)")
+        error("unsupported compression method $(info[].compression_method)")
     end
-    return ZipFileSource(info, source)
+
+    crcstream = CRC32Source(source)
+
+    return ZipFileSource(info, crcstream)
 end
+
+zipfilesource(info::ZipFileInformation, io::IO) = zipfilesource(Ref(info), io)
 
 function zipfilesource(f::F, info::ZipFileInformation, io::IO) where {F <: Function}
     zs = zipfilesource(info, io)
@@ -65,54 +74,14 @@ function zipfilesource(f::F, info::ZipFileInformation, io::IO) where {F <: Funct
 end
 
 """
-    validate(zf::ZipFileSource)
+    info(zipfile)
 
-Validate that the contents read from an archived file match the information stored
-in the Local File Header and return the data read.
+Return a ZipFileInformation object describing the file.
 
-If the contents of the file do not match the information in the Local File Header, the
-method will throw an error. The method checks that the compressed and uncompressed file
-sizes match what is in the header, and that the CRC-32 of the compressed data matches what
-is reported in the header.
-
-This method will return the remainder of the raw file data that has not yet been read from
-the archive as a `Vector{UInt8}`.
+See: [ZipFileInformation](@ref) for details.
 """
-function validate(zf::ZipFileSource)
-    # read the remainder of the file
-    data = read(zf)
-    if !eof(zf)
-        throw("expected EOF not reached")
-    end
-    # FIXME The limiter checks if the Data Descriptor's compressed size is valid for what
-    # has been read, but the uncompressed size cannot (yet) be checked on compressed files.
-    badcom = !zf.info.descriptor_follows && bytes_in(zf) != zf.info.compressed_size
-    badunc = !zf.info.descriptor_follows && bytes_out(zf) != zf.info.uncompressed_size
+info(z::ZipFileSource) = z.info[]
 
-    if badcom
-        @error "Compressed size check failed: expected $(zf.info.compressed_size), got $(bytes_in(zf))"
-    end
-    if badunc
-        @error "Uncompressed size check failed: expected $(zf.info.uncompressed_size), got $(bytes_out(zf))"
-    end
-    if !badunc && length(data) < zf.info.uncompressed_size
-        @warn "Unable to check CRC-32: data already read from stream"
-        badcrc = false
-    elseif zf.info.descriptor_follows
-        badcrc = false # we literally cannot be here if the CRC check in the data descriptor did not work
-    else
-        badcrc = crc32(data) != zf.info.crc32
-    end
-    if badcrc
-        @error "CRC-32 check failed: expected $(string(zf.info.crc32; base=16)), got $(string(crc32(data); base=16))"
-    end
-    if badcom || badunc || badcrc
-        error("validation failed")
-    else
-        @debug "validation succeeded"
-    end
-    return data
-end
 
 function Base.read(zf::ZipFileSource, ::Type{UInt8}) 
     x = read(zf.source, UInt8)
@@ -134,7 +103,52 @@ function Base.readbytes!(zf::ZipFileSource, a::AbstractVector{UInt8}, nb=length(
     return n
 end
 
-Base.eof(zf::ZipFileSource) = eof(zf.source)
+function Base.eof(zf::ZipFileSource)
+    # stream chain is CRC<-Transcoder<-Truncated<-(Raw from ZipArchiveSource)
+    crc_stream = zf.source
+    e = eof(crc_stream)
+    if !zf.info[].descriptor_follows
+        # just return what the fixed size limiter tells us
+        return e
+    end
+    # no false negatives with the sentinel
+    if !e
+        return false
+    end
+
+    # check if the sentinel was correct
+    double_check = double_check_eof(zf, crc_stream.crc32, bytes_in(zf), bytes_out(zf))
+    if !double_check
+        Base.reseteof(crc_stream.stream.stream)
+        return false
+    end
+    return true
+end
+
+function double_check_eof(zf::ZipFileSource, crc::UInt32, cbytes::Integer, ubytes::Integer)
+    T = zf.info[].zip64 ? UInt64 : UInt32
+    (dd_crc, dd_cbytes, dd_ubytes, dd_ok) = read_data_descriptor(T, zf)
+    return dd_ok && crc == dd_crc && cbytes == dd_cbytes && ubytes == dd_ubytes
+end
+
+function read_data_descriptor(::Type{T}, zf::ZipFileSource) where {T <: Unsigned}
+    # stream chain is CRC<-Transcoder<-Truncated<-(Raw from ZipArchiveSource)
+    raw_stream = TruncatedStreams.unwrap(zf.source.stream.stream) # .stream.stream.stream.stream...
+    mark(raw_stream)
+    try
+        # read three values in a row
+        return readle(raw_stream, UInt32), readle(raw_stream, T), readle(raw_stream, T), true
+    catch e
+        if isa(e, EOFError)
+            return UInt32(0), zero(T), zero(T), false
+        else
+            throw(e)
+        end
+    finally
+        reset(raw_stream)
+    end
+end
+
 function Base.seek(::ZipFileSource, ::Integer)
     error("stream cannot seek")
 end
@@ -155,20 +169,12 @@ Base.close(::ZipFileSource) = nothing # Do not close the source!
 Base.position(zf::ZipFileSource) = position(zf.source)
 
 function bytes_in(zf::ZipFileSource)
-    mode = zf.source.state.mode
-    if mode ∈ (:stop, :close)
-        return zf.info.compressed_size
-    end
-    stats = TranscodingStreams.stats(zf.source)
+    stats = TranscodingStreams.stats(zf.source.stream)
     return stats.transcoded_in
 end
 
 function bytes_out(zf::ZipFileSource)
-    mode = zf.source.state.mode
-    if mode ∈ (:stop, :close)
-        return zf.info.uncompressed_size
-    end
-    stats = TranscodingStreams.stats(zf.source)
+    stats = TranscodingStreams.stats(zf.source.stream)
     return stats.transcoded_out
 end
 
@@ -209,7 +215,7 @@ Create `ZipArchiveSource` objects using the [`zipsource`](@ref) function.
 """
 mutable struct ZipArchiveSource{S<:IO} <: IO
     source::NoopStream{S}
-    directory::Vector{ZipFileInformation}
+    directory::Vector{Ref{ZipFileInformation}}
     offsets::Vector{UInt64}
 
     # make sure we do not iterate into the central directory
@@ -224,6 +230,40 @@ function Base.show(io::IO, za::ZipArchiveSource)
     eof_string = eof(za) ? ", EOF" : ""
     print(io, "ZipArchiveSource($byte_string from $entries $entries_string consumed$eof_string)")
     return
+end
+
+function Base.show(io::IO, mime::MIME"text/plain", za::ZipArchiveSource)
+    print(io, "ZIP archive source stream data after reading ", human_readable_bytes(bytes_in(za)))
+    if eof(za)
+        print(io, " (EOF reached)")
+    end
+    print(io, ", number of entries")
+    print(io, ": ", length(za.directory))
+    if length(za.directory) > 0
+        n_files = 0
+        println(io)
+        total_uc = 0
+        total_c = 0
+        for entry in za.directory
+            show(io, mime, entry[])
+            println(io)
+            total_uc += entry[].uncompressed_size
+            total_c += entry[].compressed_size
+            if !isdir(entry[])
+                n_files += 1
+            end
+        end
+        print(io, n_files, " file")
+        if n_files != 1
+            print(io, "s")
+        end
+        print(io, ", $(human_readable_bytes(total_uc)) uncompressed, $(human_readable_bytes(total_c)) compressed")
+        if total_uc >= total_c && total_uc > 0
+            @printf(io, ": %5.1f%%", (total_uc - total_c) * 100 / total_uc)
+        end
+    end
+    println(io)
+    return nothing
 end
 
 """
@@ -258,7 +298,7 @@ the lifetime of the argument.
 
 """
 function zipsource(io::IO)
-    zs = ZipArchiveSource(NoopStream(io), ZipFileInformation[], UInt64[], false)
+    zs = ZipArchiveSource(NoopStream(io), Ref{ZipFileInformation}[], UInt64[], false)
     return zs
 end
 function zipsource(io::NoopStream) 
@@ -278,7 +318,7 @@ function zipsource(f::F, x::AbstractString; kwargs...) where {F<:Function}
 end
 
 for func in (:eof, :isopen, :bytesavailable, :close, :isreadable)
-    @eval Base.$func(s::ZipArchiveSource) = $func(s.source)
+    @eval Base.$func(s::ZipArchiveSource) = Base.$func(s.source)
 end
 
 Base.read(zs::ZipArchiveSource, ::Type{UInt8}) = read(zs.source, UInt8)
@@ -296,58 +336,9 @@ function Base.skip(zs::ZipArchiveSource, n::Integer)
     read(zs.source, n)
     return
 end
-function Base.seek(::ZipArchiveSource, ::Integer)
-    error("stream cannot seek")
-end
 
 Base.iswritable(::ZipArchiveSource) = false
 
-"""
-    validate(source::ZipArchiveSource)
-
-Validate the files in the archive `source` against the Central Directory at the end of
-the archive and return all data read as a vector of byte vectors (one per file).
-
-This method consumes _all_ the remaining data in the source stream of `source` and throws an
-exception if the file information read does not match the information in the Central
-Directory. Files that have already been consumed prior to calling this method will still
-be validated, even if their contents are not returned.
-
-See also [`validate(::ZipFileSource)`](@ref).
-"""
-function validate(zs::ZipArchiveSource)
-    # validate remaining files
-    filedata = Vector{Vector{UInt8}}()
-    for file in zs
-        push!(filedata, validate(file))
-    end
-
-    # Guaranteed to be after the last local header found,
-    # maybe after the central directory?
-    # Read off the directory contents and check what was found.
-    ncd = 0
-    for (i, lf_info) in enumerate(zs.directory)
-        ncd += 1
-        cd_info = read(zs.source, CentralDirectoryHeader)
-        if !_is_consistent(cd_info.info, lf_info)
-            error("discrepancy detected in central directory entry $i: expected $lf_info, got $(cd_info.info)")
-        end
-        if cd_info.offset != zs.offsets[i]
-            error("discrepancy detected in central directory offset $i: expected $(zs.offsets[i]), got $(cd_info.offset)")
-        end
-        # If this isn't the end of the file, skip the next 4 signature bytes
-        if !eof(zs.source)
-            skip(zs.source, 4)
-        end
-    end
-    if ncd != length(zs.directory)
-        error("discrepancy detected in number of central directory entries: expected $ncd, got $(length(zs.directory))")
-    end
-    # TODO: validate EOCD record(s)
-    # Until then, just read to EOF
-    read(zs)
-    return filedata
-end
 """
     iterate(zs::ZipArchiveSource)
 
@@ -383,7 +374,8 @@ function Base.iterate(zs::ZipArchiveSource, state::Int=0)
     # add the local file header to the directory
     header = read(zs, LocalFileHeader)
     @debug "Read local file header" header.info offset
-    push!(zs.directory, header.info)
+    header_ref = Ref(header.info)
+    push!(zs.directory, header_ref)
     push!(zs.offsets, offset)
 
     # if this is a directory, move on to the next file
@@ -391,7 +383,7 @@ function Base.iterate(zs::ZipArchiveSource, state::Int=0)
         return iterate(zs, state)
     end
 
-    zf = zipfilesource(header.info, zs.source)
+    zf = zipfilesource(header_ref, zs.source)
     return (zf, state+1)
 end
 

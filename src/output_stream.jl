@@ -72,17 +72,16 @@ mutable struct ZipFileSink{S<:CRC32Sink,R<:ZipArchiveSink} <: AbstractZipFileSin
 
     # for writing data to the parent archive on close
     _raw_sink::R
-    _crc32::UInt32
     # don't close twice
     _closed::Bool
 end
 
 function Base.show(io::IO, zf::ZipFileSink)
-    info = zf.info
-    fname = info.name
-    compression = compression_name(info.compression_method)
+    i = info(zf)
+    fname = i.name
+    compression = compression_name(i.compression_method)
     csize = bytes_out(zf)
-    if info.compression_method == compression_code(:store)
+    if i.compression_method == compression_code(:store)
         size_string = human_readable_bytes(csize)
     else
         usize = bytes_in(zf)
@@ -92,6 +91,15 @@ function Base.show(io::IO, zf::ZipFileSink)
     print(io, "ZipFileSink(<$fname> $compression $size_string written$eof_string)")
     return
 end
+
+"""
+    info(zipfile)
+
+Return a ZipFileInformation object describing the file.
+
+See: [ZipFileInformation](@ref) for details.
+"""
+info(zf::ZipFileSink) = zf.info
 
 """
     close(zipoutfile)
@@ -116,21 +124,22 @@ function Base.close(
     crc = crc32(zipfile.sink)
     c_size = bytes_in(zipfile)
     uc_size = bytes_out(zipfile)
+    fi = info(zipfile)
     # FIXME: Not atomic!
     # NOTE: not standard per se, but more common than not to use a signature here.
-    if zipfile.info.descriptor_follows
+    if fi.descriptor_follows
         writele(zipfile._raw_sink, SIG_DATA_DESCRIPTOR)
         writele(zipfile._raw_sink, crc)
         # Force Zip64 no matter the actual sizes
         writele(zipfile._raw_sink, c_size)
         writele(zipfile._raw_sink, uc_size)
     else
-        if crc != zipfile.info.crc32
-            error("file data written to archive does not match local header data: expected CRC-32 $(zipfile.info.crc32), got $crc")
-        elseif c_size != zipfile.info.compressed_size
-            error("file data written to archive does not match local header data: expected compressed size $(zipfile.info.compressed_size), got $c_size")
-        elseif uc_size != zipfile.info.uncompressed_size
-            error("file data written to archive does not match local header data: expected uncompressed size $(zipfile.info.uncompressed_size), got $uc_size")
+        if crc != fi.crc32
+            error("file data written to archive does not match local header data: expected CRC-32 $(fi.crc32), got $crc")
+        elseif c_size != fi.compressed_size
+            error("file data written to archive does not match local header data: expected compressed size $(fi.compressed_size), got $c_size")
+        elseif uc_size != fi.uncompressed_size
+            error("file data written to archive does not match local header data: expected uncompressed size $(fi.uncompressed_size), got $uc_size")
         end
     end
 
@@ -138,15 +147,15 @@ function Base.close(
     zip64 = zipfile.offset >= typemax(UInt32) || c_size >= typemax(UInt32) || uc_size >= typemax(UInt32)
     extra = zip64 ? 0 : 20
     directory_info = ZipFileInformation(
-        zipfile.info.compression_method,
+        info(zipfile).compression_method,
         uc_size,
         c_size,
         now(),
         crc,
         extra,
-        zipfile.info.name,
+        info(zipfile).name,
         true,
-        zipfile.info.utf8,
+        info(zipfile).utf8,
         zip64,
     )
     push!(
@@ -277,6 +286,11 @@ function zipsink(f::F, fname::AbstractString; kwargs...) where {F<:Function}
     return val
 end
 
+"""
+    close(s::ZipArchiveSink; close_sink::Bool=true)
+
+Close the archive sink, optionally closing the underlying IO object as well.
+"""
 function Base.close(archive::ZipArchiveSink; close_sink::Bool=true)
     if archive._is_closed
         return
@@ -418,6 +432,7 @@ Create a file within a Zip archive and return a handle for writing.
 
 # Keyword arguments
 - `compression::Union{UInt16,Symbol} = :deflate`: Can be one of `:deflate`, `:store`, or the associated codes defined by the Zip archive standard (`0x0008` or `0x0000`, respectively). Determines how the data is compressed when writing to the archive.
+- `level::Integer = $(CodecZlib.Z_DEFAULT_COMPRESSION)`: zlib compression level for `:deflate` compression method, higher values corresponding to better compression and slower compression speed (valid values [-1..9] with -1 corresponding to the default level of 6, ignored if `compression == :store`).
 - `utf8::Bool = true`: If `true`, the file name and comment will be written to the archive metadata encoded in UTF-8 strings, and a flag will be set in the metadata to instruct decompression programs to read these strings as such. If `false`, the default IBM437 encoding will be used. This does not affect the file data itself.
 - `comment::AbstractString = ""`: Comment metadata to add to the archive about the file. This does not affect the file data itself.
 - `make_path::Bool = false`: If `true`, any directories in `fname` will be created first. If `false` and any directory in the path does not exist, an exception will be thrown.
@@ -433,6 +448,7 @@ function Base.open(
     archive::ZipArchiveSink,
     fname::AbstractString;
     compression::Union{Symbol,UInt16} = :deflate,
+    level::Integer = CodecZlib.Z_DEFAULT_COMPRESSION,
     utf8::Bool = true,
     comment::AbstractString = "",
     make_path::Bool = false,
@@ -485,7 +501,7 @@ function Base.open(
     if ccode == COMPRESSION_STORE
         sink = NoopStream(archive)
     elseif ccode == COMPRESSION_DEFLATE
-        sink = DeflateCompressorStream(archive)
+        sink = DeflateCompressorStream(archive; level=level)
     else
         # How did I end up here?
         error("undefined compression type $compression")
@@ -499,7 +515,6 @@ function Base.open(
         comment,
         offset,
         archive,
-        CRC32_INIT,
         false,
     )
 

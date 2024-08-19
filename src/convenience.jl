@@ -23,7 +23,10 @@ See [`zipsink`](@ref) for more information about the optional keyword arguments.
 function zip_files(archive_filename::AbstractString, input_filenames::AbstractVector{<:AbstractString}; kwargs...)
     zipsink(archive_filename; kwargs...) do sink
         for filename in input_filenames
-            rpath = relpath(filename) # relative to . by default
+            # note: relpath treats path elements with different casing as different, even on case-insensitive filesystems
+            # this can be a problem if, e.g., tempdir() and pwd() return path elements with different cases
+            # so we have to make sure to normalize the paths
+            rpath = relpath(normpath(realpath(filename)), normpath(pwd()))
             clean_path = strip_dots(rpath)
             if isdir(filename)
                 mkpath(sink, clean_path)
@@ -84,19 +87,16 @@ function unzip_files(archive_filename::AbstractString, files::AbstractVector{<:A
     files_to_extract = Set(files)
     zipsource(archive_filename) do source
         for file in source
-            if !isempty(files_to_extract) && file.info.name ∉ files_to_extract
+            if !isempty(files_to_extract) && info(file).name ∉ files_to_extract
                 continue
             end
-            dirs = split(file.info.name, ZIP_PATH_DELIMITER)[1:end-1]
+            dirs = split(info(file).name, ZIP_PATH_DELIMITER)[1:end-1]
             if !isempty(dirs)
                 mkpath(joinpath(output_path, dirs...))
             end
-            io = open(joinpath(output_path, file.info.name), "w")
-            write(io, file)
-            close(io)
-            # open(joinpath(output_path, file.info.name), "w") do io
-            #     write(io, file)
-            # end
+            open(joinpath(output_path, info(file).name), "w") do io
+                write(io, file)
+            end
         end
     end
     return

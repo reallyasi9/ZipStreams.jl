@@ -51,6 +51,72 @@ struct ZipFileInformation
     zip64::Bool
 end
 
+# Info-ZIP project, see ftp://ftp.info-zip.org/pub/infozip/license.html
+const COMPRESSION_INFO_FORMAT = String[
+    "stor",
+    "shrk",
+    "re:1",
+    "re:2",
+    "re:3",
+    "re:4",
+    "impl",
+    "tokn",
+    "defl",
+    "df64",
+    "dcli",
+    "bzp2",
+    "lzma",
+    "ters",
+    "lz77",
+    "wavp",
+    "ppmd",
+    "????",
+]
+function Base.show(io::IO, ::MIME"text/plain", zi::ZipFileInformation)
+    # TODO: status bits: drwxahs or drwxrwxrwx
+    # all: directory, readable, writable, executable
+    # windows: archive, hidden, system
+    # unix/mac: group r/w/x, user r/w/x
+    if isdir(zi)
+        print(io, "dir  ")
+    else
+        print(io, "file ")
+    end
+    # TODO: version used to store: DD.D
+    # TODO: string stating file system type
+    # original size: at least 8 digits wide
+    @printf(io, "%8d ", zi.uncompressed_size)
+    # TODO: text (t) or binary (b), encrypted=capitalized
+    # print(io, "?")
+    # TODO: extra data: none (-), extended local header only (l),
+    #   extra field only (x), both (X)
+    if zi.zip64
+        print(io, "z64 ")
+    else
+        print(io, "--- ")
+    end
+    if zi.descriptor_follows
+        print(io, "lhx ")
+    else
+        print(io, "--- ")
+    end
+    # compressed size: at least 8 digits wide
+    @printf(io, "%8d ", zi.compressed_size)
+    # compression type
+    if zi.compression_method >= length(COMPRESSION_INFO_FORMAT)
+        print(io, "???? ")
+    else
+        print(io, COMPRESSION_INFO_FORMAT[zi.compression_method+1], " ")
+    end
+    # last modified date and time
+    print(io, Dates.format(zi.last_modified, dateformat"dd-uuu-yy HH:MM:SS "))
+
+    # extra: CRC32
+    @printf(io, "0x%08x ", zi.crc32)
+    # name with directory info
+    print(io, zi.name)
+end
+
 function Base.isdir(info::ZipFileInformation)
     return info.compressed_size == 0 && info.uncompressed_size == 0 && endswith(info.name, ZIP_PATH_DELIMITER)
 end
@@ -562,16 +628,21 @@ function Base.write(
 end
 
 # Check if a CentralDirectoryHeader is consistent with a given LocalFileHeader's info
-function _is_consistent(lhs::ZipFileInformation, rhs::ZipFileInformation)
+function is_consistent(lhs::ZipFileInformation, rhs::ZipFileInformation; check_sizes::Bool=true)
     # some fields have to always match
     rhs.compression_method == lhs.compression_method || return false
-    rhs.last_modified == lhs.last_modified || return false
+    # modified time may have been read in MS-DOS format, meaning the best resolution it can muster is 2 seconds
+    floor(abs(rhs.last_modified - lhs.last_modified), Second) < Second(2) || return false
     rhs.name == lhs.name || return false
     rhs.utf8 == lhs.utf8 || return false
     
     # some fields are dependent on the data descriptor flag
-    (rhs.descriptor_follows || lhs.descriptor_follows) && return true
+    rhs.descriptor_follows == lhs.descriptor_follows || return false
 
+    # these fields might not be set yet if consistency is being checked before read is complete
+    if rhs.descriptor_follows && !check_sizes
+        return true
+    end
     rhs.uncompressed_size == lhs.uncompressed_size || return false
     rhs.compressed_size == lhs.compressed_size || return false
     rhs.crc32 == lhs.crc32 || return false
@@ -579,6 +650,12 @@ function _is_consistent(lhs::ZipFileInformation, rhs::ZipFileInformation)
     # other fields don't matter
     return true
 end
+
+# deal with refs in either position
+is_consistent(lhs::Ref, rhs::Ref; kwargs...) = is_consistent(lhs[], rhs[]; kwargs...)
+is_consistent(lhs::Ref, rhs; kwargs...) = is_consistent(lhs[], rhs; kwargs...)
+is_consistent(lhs, rhs::Ref; kwargs...) = is_consistent(lhs, rhs[]; kwargs...)
+
 
 function _write_zip64_eocd_record(io::IO, entries::UInt64, nbytes::UInt64, offset::UInt64)
     nb = writele(io, SIG_ZIP64_END_OF_CENTRAL_DIRECTORY)

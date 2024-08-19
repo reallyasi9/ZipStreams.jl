@@ -15,7 +15,7 @@ end
 
 zipsource("archive.zip") do source   # context management of sources with "do" syntax
     for f in source                  # iterate through files in an archive
-        println(f.info.name)         # "hello.txt"
+        println(info(f).name)        # "hello.txt"
         read_data = read(String, f)  # read just like you read from any IO object
         println(read_data)           # "Hello, Julia!"
     end

@@ -8,8 +8,8 @@ CurrentModule = ZipStreams
 
 You can wrap any Julia readable `IO` object with the `zipsource` function. The returned
 object can be iterated to read archived files in archive order. Information about
-each file is stored in the `.info` property of the object returned from the
-iterator. The object returned from the iterator is readable like any standard
+each file can be accessed throug the `info` method called on the object returned
+from the iterator. The object returned from the iterator is readable like any standard
 Julia `IO` object, but it is not writable.
 
 Here are some examples:
@@ -31,8 +31,8 @@ open("archive.zip") do io
     # iterate through files
     for f in zs
         
-        # get information about each file from the .info property
-        println(f.info.name)
+        # get information about each file from the info method
+        println(info(f).name)
 
         # read from the file just like any other IO object
         println(readline(f))
