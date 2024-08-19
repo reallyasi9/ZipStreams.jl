@@ -1,20 +1,20 @@
 
 """
-    validate(zf::ZipFileSource) -> Nothing
+    is_valid(zf::ZipFileSource) -> Bool
 
 Validate that the contents read from an archived file match the information stored
 in the Local File Header.
 
 If the contents of the file do not match the information in the Local File Header, the
-method will throw an error. The method checks that the compressed and uncompressed file
-sizes match what is in the header and that the CRC-32 of the uncompressed data matches what
-is reported in the header.
+method will describe the detected error using `@error` logging. The method checks that the
+compressed and uncompressed file sizes match what is in the header and that the CRC-32 of the
+uncompressed data matches what is reported in the header.
 
 Validation will work even on files that have been partially read.
 """
 function validate(zf::ZipFileSource)
     # read the remainder of the file
-    read(zf)
+    write(devnull, zf)
     if !eof(zf)
         error("EOF not reached in file $(info(zf).name)")
     end
@@ -136,6 +136,6 @@ function validate(zs::ZipArchiveSource)
     end
     # TODO: validate EOCD record(s)
     # Until then, just read to EOF
-    read(zs)
+    write(devnull, zs)
     return nothing
 end
