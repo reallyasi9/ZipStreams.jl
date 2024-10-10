@@ -6,7 +6,6 @@ end
 
 # include("test_datetime.jl")
 # include("test_crc32.jl")
-# include("test_limiters.jl")
 # include("test_truncated_source.jl")
 # include("test_validate.jl")
 
