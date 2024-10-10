@@ -47,9 +47,9 @@ function zipfilesource(info::Ref{ZipFileInformation}, io::IO)
         else
             @warn "Data descriptor signalled in local file header: extracted data may corrupt or truncated" maxlog=3
         end
-        trunc_source = SentinelIO(io, htol(bytearray(SIG_DATA_DESCRIPTOR)))
+        trunc_source = SentinelizedSource(io, htol(bytearray(SIG_DATA_DESCRIPTOR)))
     else
-        trunc_source = FixedLengthIO(io, info[].compressed_size)
+        trunc_source = FixedLengthSource(io, info[].compressed_size)
     end
 
     if info[].compression_method == COMPRESSION_DEFLATE
