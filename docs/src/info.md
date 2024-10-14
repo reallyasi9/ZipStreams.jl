@@ -76,7 +76,6 @@ file       15 --- ---       15 stor 02-Nov-22 00:58:36 0xb24bab9f subdir/goodbye
 DocTestFilters = nothing
 ```
 
-## API
-```@docs
-show
+```@info
+ZipStreams.ZipFileInformation
 ```

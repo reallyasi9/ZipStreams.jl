@@ -250,4 +250,5 @@ Base.mkdir(::ZipArchiveSink, ::AbstractString)
 Base.mkpath(::ZipArchiveSink, ::AbstractString)
 Base.open(::ZipArchiveSink, ::AbstractString)
 write_file
+info(::ZipFileSink)
 ```
