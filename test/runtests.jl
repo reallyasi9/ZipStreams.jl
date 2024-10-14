@@ -249,7 +249,7 @@ end
 
     multi_file = test_file_name(true, true, false, false, false, false, "multi")
 
-    mktempdir() do tdir
+    mktempdir(pwd()) do tdir
         filename = "subdir/hello.txt"
         unzip_files(multi_file, filename; output_path=tdir, make_path=true)
         @test isfile(joinpath(tdir, filename))
@@ -262,7 +262,7 @@ end
 
     multi_file = test_file_name(true, true, false, false, false, false, "multi")
 
-    mktempdir() do tdir
+    mktempdir(pwd()) do tdir
         filenames = ["hello.txt", "subdir/hello.txt"]
         unzip_files(multi_file, filenames; output_path=tdir, make_path=true)
         for filename in filenames
@@ -277,7 +277,7 @@ end
 
     multi_file = test_file_name(true, true, false, false, false, false, "multi")
 
-    mktempdir() do tdir
+    mktempdir(pwd()) do tdir
         filenames = ["hello.txt", "subdir/hello.txt"]
         unzip_files(multi_file; output_path=tdir, make_path=true)
         for filename in filenames
@@ -292,10 +292,10 @@ end
 
     multi_file = test_file_name(true, true, false, false, false, false, "multi")
 
-    mktempdir() do tdir
+    mktempdir(pwd()) do tdir
         unzip_files(multi_file; output_path=tdir, make_path=true)
 
-        mktemp() do path, io
+        mktemp(pwd()) do path, io
             filename = "subdir/hello.txt"
             zip_files(path, joinpath(tdir, filename))
             zipsource(path) do source
@@ -313,9 +313,9 @@ end
 
     multi_file = test_file_name(true, true, false, false, false, false, "multi")
 
-    mktempdir() do tdir
+    mktempdir(pwd()) do tdir
         unzip_files(multi_file; output_path=tdir, make_path=true)
-        mktemp() do path, io
+        mktemp(pwd()) do path, io
             filenames = ["hello.txt", "subdir/hello.txt"]
             zip_files(path, joinpath.(Ref(tdir), filenames))
             zipsource(path) do source
@@ -334,9 +334,9 @@ end
 
     multi_file = test_file_name(true, true, false, false, false, false, "multi")
 
-    mktempdir() do tdir
+    mktempdir(pwd()) do tdir
         unzip_files(multi_file; output_path=tdir, make_path=true)
-        mktemp() do path, io
+        mktemp(pwd()) do path, io
             filenames = ["hello.txt"]
             zip_files(path, tdir)
             zipsource(path) do archive
@@ -355,9 +355,9 @@ end
 
     multi_file = test_file_name(true, true, false, false, false, false, "multi")
 
-    mktempdir() do tdir
+    mktempdir(pwd()) do tdir
         unzip_files(multi_file; output_path=tdir, make_path=true)
-        mktemp() do path, io
+        mktemp(pwd()) do path, io
             filenames = ["hello.txt", "subdir/hello.txt"]
             zip_files(path, tdir; recurse_directories=true)
             zipsource(path) do archive
