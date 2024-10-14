@@ -78,5 +78,5 @@ DocTestFilters = nothing
 
 ## API
 ```@docs
-show
+Base.show
 ```
