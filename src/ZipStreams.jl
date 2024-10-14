@@ -1,5 +1,5 @@
 """
-A Julia package for read ZIP archive files from a stream (NO SEEKING!)
+A Julia package for read ZIP archive files from a non-seeking stream.
 
 This package provides support for reading and writing ZIP archives in Julia.
 Install it via the Julia package manager using ``Pkg.add("ZipStreams")``.
