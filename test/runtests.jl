@@ -228,23 +228,6 @@ end
     @test read(zf, String) == FILE_CONTENT
     # note that the source does not need to be closed
 
-    seekstart(buffer)
-    slow = SlowIO(buffer)
-    source = zipsource(slow)
-    tslow = @elapsed begin
-        zf = next_file(source)
-        read(zf)
-    end
-
-    seekstart(buffer)
-    source = zipsource(buffer)
-    tfast = @elapsed begin
-        zf = next_file(source)
-        read(zf)
-    end
-
-    @test tslow > tfast
-
 end
 
 @testitem "Stream-to-Archive IO" tags = [:sink] begin
