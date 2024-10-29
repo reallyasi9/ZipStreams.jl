@@ -4,22 +4,8 @@ ignoring standards just a little bit.
 
 ## Synopsis
 
-```julia
-using ZipStreams
-
-zipsink("archive.zip") do sink     # context management of sinks with "do" syntax
-    open(sink, "hello.txt") do f   # context management of files with "do" syntax
-        write(f, "Hello, Julia!")  # write just like you write to any IO object
-    end
-end
-
-zipsource("archive.zip") do source   # context management of sources with "do" syntax
-    for f in source                  # iterate through files in an archive
-        println(info(f).name)        # "hello.txt"
-        read_data = read(String, f)  # read just like you read from any IO object
-        println(read_data)           # "Hello, Julia!"
-    end
-end
+```@docs
+ZipStreams
 ```
 
 ## Overview

@@ -96,8 +96,6 @@ end
     info(zipfile)
 
 Return a ZipFileInformation object describing the file.
-
-See: [ZipFileInformation](@ref) for details.
 """
 info(zf::ZipFileSink) = zf.info
 

@@ -191,4 +191,5 @@ ZipArchiveSource
 zipsource
 next_file
 validate
+info(::ZipFileSource)
 ```
