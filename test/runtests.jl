@@ -329,6 +329,31 @@ end
     end
 end
 
+@testitem "zip_files with file options" tags = [:utils] begin
+    include("common.jl")
+
+    multi_file = test_file_name(true, true, false, false, false, false, "multi")
+
+    mktempdir(pwd()) do tdir
+        unzip_files(multi_file; output_path=tdir, make_path=true)
+        mktemp(pwd()) do path, io
+            filenames = ["hello.txt", "subdir/hello.txt"]
+            test_filename = joinpath(tdir, "hello.txt")
+            file_kwargs = Dict(test_filename => (compression=:deflate, level=1))
+            zip_files(path, joinpath.(Ref(tdir), filenames); compression=:store)
+            zipsource(path) do source
+                for (f, filename) in zip(source, filenames)
+                    if filename == test_filename
+                        @test info(f).compression_method == 0x0008 # deflate
+                    else
+                        @test info(f).compression_method == 0x0000 # store
+                    end
+                end
+            end
+        end
+    end
+end
+
 @testitem "zip_files entire directory, no recurse (default)" tags = [:utils] begin
     include("common.jl")
 
