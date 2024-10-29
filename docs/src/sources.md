@@ -122,7 +122,7 @@ using ZipStreams
 
 zipsource("archive.zip") do zs
     f = next_file(zs)
-    validate(f) # throws if there is an inconsistency
+    validate(f) # throws if there is an inconsistency in the file's checksums
 end
 ```
 
@@ -133,44 +133,49 @@ using ZipStreams
 
 io = open("archive.zip")
 zipsource(io) do zs
-    validate(zs) # validate all files and the archive itself
+    validate(zs) # validate all local checksums and the central directory
 end
 
 seekstart(io)
 zipsource(io) do zs
     f = next_file(zs) # read the first file
-    validate(zs) # validate all files except the first!
+    validate(zs) # validate all remaining local checksums and the central directory
 end
 
 close(io)
 ```
 
-The `validate` methods consume the data in the source and return vectors of
-raw bytes. When called on an archived file, it returns a single `Vector{UInt8}`.
-When called on the archive itself, it returns a `Vector{Vector{UInt8}}` containing
-the remaining unread file data in archive order, _excluding any files that have already
-been read by iterating or with `next_file`_.
+The `validate` methods consume the remaining data in the source. When called on an archived
+file, it reads the remainder of the data in the file that has not yet been read from the
+source (if any) and discards it. When called on the archive itself, will invalidate any
+currently referenced file, meaning reading from an open file within the archive after
+running validate on the archive will result in undefined behavior.
+
+!!! warning "Reading from two places in an archive at once"
+
+    Do not attempt to read from two places in an open archive at once, or jump between one
+    open file and another, as this will result in undefined behavior!
 
 ```julia
 using ZipStreams
 
 zs = zipsource("archive.zip")
 f1 = next_file(zs)
-data1 = validate(f1) # contains all the file data as raw bytes
-@assert typeof(data1) == Vector{UInt8}
+validate(f1) # reads all data in f1 and discards it
+@assert eof(f1) == true
+@assert isempty(read(f1)) == true
 close(zs)
 
 zs = zipsource("archive.zip")
 f2 = next_file(zs)
-println(readline(f2)) # read a line off the file first
-data2 = validate(f2) # contains the remaining file data excluding the first line!
-@assert typeof(data2) == Vector{UInt8}
-@assert sizeof(data2) < sizeof(data1)
-close(zs)
+readline(f2) # reads a line off the file first
+validate(zs) # reads everything, including the remainder of the first file
 
-zs = zipsource("archive.zip")
-all_data = validate(zs) # returns a Vector{Vector{UInt8}} of all remaining files
-@assert all_data[1] == data1
+# DO NOT READ FROM f2 HERE AFTER CALLING validate ON THE ARCHIVE!
+# THIS RESULTS IN UNDEFINED BEHAVIOR!
+# @assert eof(f2) == false  # THIS IS A LIE!
+# read(f2)  # THIS MAY CRASH YOUR COMPUTER!
+
 close(zs)
 ```
 
