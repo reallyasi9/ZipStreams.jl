@@ -4,25 +4,49 @@
 
 Create an archive from files on disk.
 
-The archive `out_filename` will be created using the `zipsink` method with the given keyword
-arguments. `in_filename` can be a single path or a vector of multiple paths on disk. The
-files will be written in the archive with paths matching the closest common relative path
-between the current directory (`"."`) and the full path of the file, so if `archive_filename`
-is "/a/b/archive.zip" and one of `files` is "/a/c/file", then the file will be witten
-with the path "c/file".
+The archive `out_filename` will be created using the `zipsink` method with the keyword
+arguments split as listed below. `in_filename` can be a single path or a vector of multiple
+paths on disk. The files will be written in the archive with paths matching the closest
+common relative path between the current directory (`"."`) and the full path of the file, so
+if `archive_filename` is "/a/b/archive.zip" and one of `files` is "/a/c/file", then the file
+will be witten with the path "c/file".
 
-If `dir` is a directory and `recurse_directories` is `true`, then all files and directories found when
-traversing the directory will be added to the archive. If `recurse_directories` is `false` (the
-default), then subdirectories of `dir` will not be traversed.
+If `dir` is a directory and `recurse_directories` is `true`, then all files and directories
+found when traversing the directory will be added to the archive. If `recurse_directories`
+is `false` (the default), then subdirectories of `dir` will not be traversed.
 
 All files are written to the archive using the default arguments specified by
-`open(zipsink, fn)`. See [`open(::ZipArchiveSink, ::AbstractString)`](@ref) for more information.
+`open(zipsink, fn; keyword_args..)`, with special keyword arguments split as described
+below.
 
-See [`zipsink`](@ref) for more information about the optional keyword arguments.
+# Arguments
+- `out_filename::AbstractString`: the output archive filename to create.
+- `files::AbstractVector{<:AbstractString}`: a list of file paths to add to the newly
+    created archive.
+- `dir::AbstractString`: a path to a directory to add to the newly created archive.
+
+# Keyword arguments
+- `utf8::Bool = true`: use UTF-8 encoding for file names (if `false`, use IBM437).
+- `archive_comment::AbstractString = ""`: archive comment string to add to the central
+    directory, equivalent to passing the `comment` keyword to `zipsink`.
+- `file_options::Dict{String, Any} = nothing`: if a file name added to the archive _exactly_
+    matches (`==`) a key in `file_options`, then the value corresponding to that key will be
+    splatted as keyword arguments for that file only, overriding keyword arguments passed as
+    described below.
+- All other keyword arguments: passed unmodified to the `open(sink, filename)` method.
+
+See [`open(::ZipArchiveSink, ::AbstractString)`](@ref) and [`zipsink`](@ref) for more
+information about the optional keyword arguments available for each method.
 """
-function zip_files(archive_filename::AbstractString, input_filenames::AbstractVector{<:AbstractString}; kwargs...)
-    zipsink(archive_filename; kwargs...) do sink
+function zip_files(archive_filename::AbstractString, input_filenames::AbstractVector{<:AbstractString}; utf8::Bool=true, archive_comment::AbstractString="", kwargs...)
+    file_options, global_kwargs = TranscodingStreams.splitkwargs(kwargs, (:file_options,))
+    zipsink(archive_filename; utf8=utf8, comment=archive_comment) do sink
         for filename in input_filenames
+            # pull out file options and override global_kwargs, if possible
+            file_kwargs = Dict{Symbol, Any}(pairs(global_kwargs))
+            if !isempty(file_options) && filename in keys(file_options)
+                push!(file_kwargs, pairs(file_options[filename])...)
+            end
             # note: relpath treats path elements with different casing as different, even on case-insensitive filesystems
             # this can be a problem if, e.g., tempdir() and pwd() return path elements with different cases
             # so we have to make sure to normalize the paths
@@ -32,7 +56,7 @@ function zip_files(archive_filename::AbstractString, input_filenames::AbstractVe
                 mkpath(sink, clean_path)
             else
                 open(filename, "r") do io
-                    open(sink, clean_path; make_path=true) do fsink
+                    open(sink, clean_path; make_path=true, file_kwargs...) do fsink
                         write(fsink, io)
                     end
                 end
