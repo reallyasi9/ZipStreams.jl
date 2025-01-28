@@ -146,12 +146,12 @@ end
     zipsource(bad_uncompressed_file) do source
         # file is bad
         f = next_file(source)
-        @test_throws ErrorException validate(f)
+        @test_throws ZlibError validate(f)
     end
     zipsource(bad_uncompressed_file) do source
         # note: this error breaks reading because the zlib codec does not read complete information
         for file in source
-            @test_throws ErrorException read(file)
+            @test_throws ZlibError read(file)
         end
         # archive is bad
         @test_throws ErrorException validate(source)
