@@ -154,6 +154,11 @@ contents of the _remaining_ files into the object,
 concatenated, and in archive order, _excluding any files that have already
 been read by iterating or with `next_file`_.
 
+!!! warning "Reading from two places in an archive at once"
+
+    Do not attempt to read from two places in an open archive at once, or jump between one
+    open file and another, as this will result in undefined behavior!
+
 ```julia
 using ZipStreams
 

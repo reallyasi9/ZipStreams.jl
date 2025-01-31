@@ -15,6 +15,7 @@ makedocs(
     sitename = "ZipStreams",
     format = Documenter.HTML(edit_link = "main"),
     modules = [ZipStreams],
+    checkdocs = :exports,
     pages = [
         "Overview" => "index.md",
         "Reading from Sources" => "sources.md",

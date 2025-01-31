@@ -3,6 +3,12 @@ using Dates
 using LazyArtifacts
 using ZipStreams
 
+@static if isdefined(CodecZlib, :ZlibError)
+    const ZlibError = CodecZlib.ZlibError
+else
+    const ZlibError = ErrorException
+end
+
 function make_file_info(; name::AbstractString="hello.txt", descriptor::Bool=false, utf8::Bool=false, zip64::Bool=false, datetime::DateTime=DateTime(2022, 8, 18, 23, 21, 38), compression::UInt16=ZipStreams.COMPRESSION_STORE)
     uc_size = 13 % UInt64
     if compression == ZipStreams.COMPRESSION_DEFLATE

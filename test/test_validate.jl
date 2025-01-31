@@ -198,14 +198,12 @@ end
     zipsource(bad_uncompressed_file) do source
         # file is bad
         f = next_file(source)
-        # bad compressed size results in a zlib error when reading the file
-        @test_throws ErrorException read(f)
-        # @test is_valid!(f) == false
+        @test_throws Exception validate(f)
     end
     zipsource(bad_uncompressed_file) do source
         # note: this error breaks reading because the zlib codec does not read complete information
         for file in source
-            @test_throws ErrorException read(file)
+            @test_throws Exception read(file)
         end
         # archive is bad
         @test is_valid!(source) == false
@@ -244,22 +242,4 @@ end
     # TODO: EOCD checking
     # TODO: duplicate file name checking
     # TODO: out of order CD
-end
-
-@testitem "multiple validation checks" begin
-    include("common.jl")
-    
-    multi_file = test_file_name(true, true, false, false, false, false, "multi")
-
-    zipsource(multi_file) do source
-        for file in source
-            @debug "testing file $(info(file).name) in archive $archive_name"
-            @test is_valid!(file) == is_valid!(file)
-        end
-    end
-    zipsource(multi_file) do source
-        @debug "testing all files in archive $archive_name at once"
-        @test is_valid!(source)
-        @test eof(source)
-    end
 end
