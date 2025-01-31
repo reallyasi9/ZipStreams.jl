@@ -65,7 +65,7 @@ mutable struct SlowIO{S <: IO} <: IO
     io::S
     delay::Int
 
-    SlowIO(io::S, delay::Integer=1) where {S<:IO} = new{S}(io, delay)
+    SlowIO(io::S, delay::Integer=10) where {S<:IO} = new{S}(io, delay)
 end
 function Base.unsafe_read(s::SlowIO, p::Ptr{UInt8}, n::UInt)
     sleep(s.delay/1000.)

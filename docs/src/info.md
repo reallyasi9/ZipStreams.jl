@@ -60,7 +60,7 @@ After reading all of the data in the archive using `vialidate`, the next thing t
 information about the entities read:
 
 ```jldoctest info1
-validate(source);
+@assert is_valid!(source)
 source
 
 # output

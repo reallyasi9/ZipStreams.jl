@@ -12,9 +12,10 @@ A `ZipFileSource` implements `read(zf, UInt8)`, allowing all other basic read
 opperations to treat the object as if it were a file. Information about the
 archived file is stored in the `info` property.
 """
-struct ZipFileSource <: IO
+mutable struct ZipFileSource <: IO
     info::Ref{ZipFileInformation}
     source::CRC32Source
+    _valid::Union{Bool, Nothing}
 end
 
 # Expected size of the entire file, header and data descriptor included, in bytes
@@ -42,28 +43,29 @@ function Base.show(io::IO, zf::ZipFileSource)
 end
 
 function zipfilesource(info::Ref{ZipFileInformation}, io::IO)
-    if info[].descriptor_follows
-        if info[].compressed_size != 0
+    i = info[]
+    if i.descriptor_follows
+        if i.compressed_size != 0
             @warn "Data descriptor signalled in local file header, but size information present as well: data descriptor will be used, but extracted data may be corrupt" info.compressed_size maxlog=3
         else
-            @warn "Data descriptor signalled in local file header: extracted data may corrupt or truncated" maxlog=3
+            @warn "Data descriptor signalled in local file header: extracted data may be corrupt or truncated" maxlog=3
         end
         trunc_source = SentinelIO(io, htol(bytearray(SIG_DATA_DESCRIPTOR)))
     else
-        trunc_source = FixedLengthIO(io, info[].compressed_size)
+        trunc_source = FixedLengthIO(io, i.compressed_size)
     end
 
-    if info[].compression_method == COMPRESSION_DEFLATE
+    if i.compression_method == COMPRESSION_DEFLATE
         source = DeflateDecompressorStream(trunc_source; stop_on_end=true) # the truncator will signal :end to the stream
-    elseif info[].compression_method == COMPRESSION_STORE
+    elseif i.compression_method == COMPRESSION_STORE
         source = NoopStream(trunc_source)
     else
-        error("unsupported compression method $(info[].compression_method)")
+        error("unsupported compression method $(i.compression_method)")
     end
 
     crcstream = CRC32Source(source)
 
-    return ZipFileSource(info, crcstream)
+    return ZipFileSource(info, crcstream, nothing)
 end
 
 zipfilesource(info::ZipFileInformation, io::IO) = zipfilesource(Ref(info), io)
@@ -220,6 +222,7 @@ mutable struct ZipArchiveSource{S<:IO} <: IO
 
     # make sure we do not iterate into the central directory
     _no_more_files::Bool
+    _valid::Union{Nothing, Bool}
 end
 
 function Base.show(io::IO, za::ZipArchiveSource)
@@ -293,16 +296,16 @@ the lifetime of the argument.
     file locations, compressed and uncompressed sizes, and CRC-32 checksums. A
     Local File Header can lie about this information, leading to improper file
     extraction.  We **highly** recommend that users validate the file contents
-    against the Central Directory using the `validate` method before beginning
+    against the Central Directory using the `is_valid!` method before beginning
     to trust the extracted files from uncontrolled sources.
 
 """
 function zipsource(io::IO)
-    zs = ZipArchiveSource(NoopStream(io), Ref{ZipFileInformation}[], UInt64[], false)
+    zs = ZipArchiveSource(NoopStream(io), Ref{ZipFileInformation}[], UInt64[], false, nothing)
     return zs
 end
 function zipsource(io::NoopStream) 
-    zs = ZipArchiveSource(io, ZipFileInformation[], UInt64[], false)
+    zs = ZipArchiveSource(io, ZipFileInformation[], UInt64[], false, nothing)
     return zs
 end
 zipsource(fname::AbstractString; kwargs...) = zipsource(Base.open(fname, "r"); kwargs...)
