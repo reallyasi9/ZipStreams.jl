@@ -52,7 +52,7 @@ function zipfilesource(info::Ref{ZipFileInformation}, io::IO)
         end
         trunc_source = SentinelizedSource(io, htol(bytearray(SIG_DATA_DESCRIPTOR)))
     else
-        trunc_source = FixedLengthIO(io, i.compressed_size)
+        trunc_source = FixedLengthSource(io, i.compressed_size)
     end
 
     if i.compression_method == COMPRESSION_DEFLATE
