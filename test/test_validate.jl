@@ -6,17 +6,33 @@
         archive_name = test_file_name(deflate, dd, local64, utf8, cd64, eocd64)
         @debug "testing archive $archive_name"
         zipsource(archive_name) do source
-            validate(source)
+            valid = is_valid!(source)
+            @test valid
             @test eof(source)
+            # should work multiple times
+            @test is_valid!(source) == valid
         end
     end
     for dd in false:true
         archive_name = test_file_name(true, dd, false, false, false, false, "multi")
         @debug "testing archive $archive_name"
         zipsource(archive_name) do source
-            validate(source)
+            valid = is_valid!(source)
+            @test valid
             @test eof(source)
+            # should work multiple times
+            @test is_valid!(source) == valid
         end
+    end
+
+    # validation can optionally dump into an IO object
+    archive_name = test_file_name(false, false, false, false, false, false)
+    @debug "validating archive $archive_name and dumping into IO"
+    zipsource(archive_name) do source
+        iobuf = IOBuffer()
+        valid = is_valid!(iobuf, source)
+        @test valid
+        @test take!(iobuf) == FILE_BYTES
     end
 end
 
@@ -27,38 +43,74 @@ end
 
     zipsource(multi_file) do source
         for file in source
-            @debug "testing file $(info(file).name) in archive $archive_name"
-            validate(file)
+            @debug "testing file $(info(file).name) in archive $multi_file"
+            valid = is_valid!(file)
+            @test valid
             @test eof(file)
+            # should work multiple times
+            @test is_valid!(file) == valid
         end
     end
     zipsource(multi_file) do source
-        @debug "testing all files in archive $archive_name at once"
-        validate(source)
+        @debug "testing all files in archive $multi_file at once"
+        valid = is_valid!(source)
+        @test valid
         @test eof(source)
+        # should work multiple times
+        @test is_valid!(source) == valid
     end
+    # validation can optionally dump into an IO object
+    @debug "validating archive $multi_file and dumping into IO all at once"
     zipsource(multi_file) do source
-        @debug "testing partial file read in archive $archive_name"
+        iobuf = IOBuffer()
+        valid = is_valid!(iobuf, source)
+        @test valid
+        @test take!(iobuf) == repeat(FILE_BYTES, 2)
+    end
+    @debug "validating archive $multi_file and dumping into IO one file at a time"
+    zipsource(multi_file) do source
+        for file in source
+            iobuf = IOBuffer()
+            valid = is_valid!(iobuf, file)
+            @test valid
+            @test take!(iobuf) == FILE_BYTES
+        end
+    end
+end
+
+@testitem "validate partial file read" begin
+    include("common.jl")
+
+    multi_file = test_file_name(true, true, false, false, false, false, "multi")
+
+    zipsource(multi_file) do source
+        @debug "testing partial file read in archive $multi_file"
+        iobuf = IOBuffer()
         file = ZipStreams.next_file(source)
         read(file, UInt8)
-        validate(file)
+        @test is_valid!(iobuf, file)
         @test eof(file)
+        @test take!(iobuf) == FILE_BYTES[2:end] # after first byte was swallowed
     end
     zipsource(multi_file) do source
-        @debug "testing partial file read, then full archive validation in archive $archive_name"
+        @debug "testing partial file read, then full archive validation in archive $multi_file"
+        iobuf = IOBuffer()
         file = ZipStreams.next_file(source)
         read(file, UInt8)
-        @test_throws ErrorException validate(source)
+        @test is_valid!(iobuf, source) == false
+        @test take!(iobuf) == FILE_BYTES # first file is skipped after reading a byte
     end
 
     # non-data descriptor files should work
     multi_non_dd = test_file_name(true, false, false ,false, false, false, "multi")
     zipsource(multi_non_dd) do source
-        @debug "testing partial file read, then full archive validation in archive $archive_name"
+        @debug "testing partial file read, then full archive validation in archive $multi_file"
+        iobuf = IOBuffer()
         file = ZipStreams.next_file(source)
         read(file, UInt8)
-        validate(source)
+        @test is_valid!(iobuf, source)
         @test eof(source)
+        @test take!(iobuf) == FILE_BYTES # first file is skipped after reading a byte
     end
 end
 
@@ -67,7 +119,7 @@ end
 
     pathological_dd_file = test_file_name(false, true, false, false, false, false, "pathological-dd")
     zipsource(pathological_dd_file) do source
-        @test_throws ErrorException validate(source)
+        @test is_valid!(source) == false
     end
 
     @debug "single file partial read followed by complete read"
@@ -75,9 +127,9 @@ end
     zipsource(single_file) do source
         f = next_file(source)
         read(f, UInt8)
-        validate(f)
+        @test is_valid!(f)
         @test eof(f)
-        validate(source)
+        @test is_valid!(source)
         @test eof(source)
     end
 
@@ -86,14 +138,14 @@ end
     zipsource(bad_crc_file) do source
         # file is bad
         f = next_file(source)
-        @test_throws ErrorException validate(f)
+        @test is_valid!(f) == false
     end
     zipsource(bad_crc_file) do source
         for file in source
             read(file)
         end
         # archive is bad
-        @test_throws ErrorException validate(source)
+        @test is_valid!(source) == false
     end
 
     @debug "local uncompressed size too large"
@@ -101,14 +153,14 @@ end
     zipsource(bad_uncompressed_file) do source
         # file is bad
         f = next_file(source)
-        @test_throws ErrorException validate(f)
+        @test is_valid!(f) == false
     end
     zipsource(bad_uncompressed_file) do source
         for file in source
             read(file)
         end
         # archive is bad
-        @test_throws ErrorException validate(source)
+        @test is_valid!(source) == false
     end
 
     @debug "local uncompressed size too small"
@@ -116,14 +168,14 @@ end
     zipsource(bad_uncompressed_file) do source
         # file is bad
         f = next_file(source)
-        @test_throws ErrorException validate(f)
+        @test is_valid!(f) == false
     end
     zipsource(bad_uncompressed_file) do source
         for file in source
             read(file)
         end
         # archive is bad
-        @test_throws ErrorException validate(source)
+        @test is_valid!(source) == false
     end
 
     @debug "local compressed size too large"
@@ -131,14 +183,14 @@ end
     zipsource(bad_uncompressed_file) do source
         # file is bad
         f = next_file(source)
-        @test_throws ErrorException validate(f)
+        @test is_valid!(f) == false
     end
     zipsource(bad_uncompressed_file) do source
         for file in source
             read(file)
         end
         # archive is bad
-        @test_throws ErrorException validate(source)
+        @test is_valid!(source) == false
     end
 
     @debug "local compressed size too short"
@@ -154,7 +206,7 @@ end
             @test_throws Exception read(file)
         end
         # archive is bad
-        @test_throws ErrorException validate(source)
+        @test is_valid!(source) == false
     end
 
     @debug "central bad CRC-32"
@@ -162,9 +214,9 @@ end
     zipsource(bad_crc_file) do source
         f = next_file(source)
         # good file
-        validate(f)
+        @test is_valid!(f)
         # bad archive
-        @test_throws ErrorException validate(source)
+        @test is_valid!(source) == false
     end
     
     @debug "central missing header"
@@ -172,9 +224,9 @@ end
     zipsource(missing_header) do source
         f = next_file(source)
         # good file
-        validate(f)
+        @test is_valid!(f)
         # bad archive
-        @test_throws ErrorException validate(source)
+        @test is_valid!(source) == false
     end
     
     @debug "central additional header"
@@ -182,9 +234,9 @@ end
     zipsource(additional_header) do source
         f = next_file(source)
         # good file
-        validate(f)
+        @test is_valid!(f)
         # bad archive
-        @test_throws ErrorException validate(source)
+        @test is_valid!(source) == false
     end
 
     # TODO: EOCD checking

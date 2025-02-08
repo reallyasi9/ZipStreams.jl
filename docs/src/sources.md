@@ -110,9 +110,9 @@ or immediately after the archived file data (in the "Data Descriptor"), and alwa
 at the end of the file (in the "Central Directory"). Because the Central Directory
 is considered the ground truth, the Local File Header and Data Descriptor may report
 inaccurate values. To verify that the content of the file matches the values in the
-Local File Header, use the `validate` method on the archived file. To verify that
+Local File Header, use the `is_valid!` method on the archived file. To verify that
 all file content in the archive matches the values in the Central Directory, use
-the `validate` method on the archive itself. These methods will throw an error if
+the `is_valid!` method on the archive itself. These methods will return `false` if
 they detect any inconsistencies.
 
 For example, to validate the data in a single file stored in the archive:
@@ -122,7 +122,7 @@ using ZipStreams
 
 zipsource("archive.zip") do zs
     f = next_file(zs)
-    validate(f) # throws if there is an inconsistency in the file's checksums
+    @assert is_valid!(f) # throws if there is an inconsistency
 end
 ```
 
@@ -133,23 +133,26 @@ using ZipStreams
 
 io = open("archive.zip")
 zipsource(io) do zs
-    validate(zs) # validate all local checksums and the central directory
+    @assert is_valid!(zs) # validate all files and the archive itself
 end
 
 seekstart(io)
 zipsource(io) do zs
-    f = next_file(zs) # read the first file
-    validate(zs) # validate all remaining local checksums and the central directory
+    f = next_file(zs)
+    read(f, UInt8) # read something from the first file
+    @assert is_valid!(zs) # validate all files except the first!
 end
 
 close(io)
 ```
 
-The `validate` methods consume the remaining data in the source. When called on an archived
-file, it reads the remainder of the data in the file that has not yet been read from the
-source (if any) and discards it. When called on the archive itself, will invalidate any
-currently referenced file, meaning reading from an open file within the archive after
-running validate on the archive will result in undefined behavior.
+The `is_valid!` methods consume the data in the source and return a `Boolean`.
+When called on an archived file, you can pass as an optional first argument an
+`IO` object into which the remaining file data will be dumped. When called on the
+archive itself with an optional first argument `IO` object, it will dump the
+contents of the _remaining_ files into the object,
+concatenated, and in archive order, _excluding any files that have already
+been read by iterating or with `next_file`_.
 
 !!! warning "Reading from two places in an archive at once"
 
@@ -161,32 +164,34 @@ using ZipStreams
 
 zs = zipsource("archive.zip")
 f1 = next_file(zs)
-validate(f1) # reads all data in f1 and discards it
-@assert eof(f1) == true
-@assert isempty(read(f1)) == true
+data1 = IOBuffer()
+@assert is_valid!(data1, f1) # data1 contains all the file data as raw bytes
+@assert take!(data1) == FILE_CONTENTS
 close(zs)
 
 zs = zipsource("archive.zip")
 f2 = next_file(zs)
-readline(f2) # reads a line off the file first
-validate(zs) # reads everything, including the remainder of the first file
+println(readline(f2)) # read a line off the file first
+data2 = IOBuffer()
+@assert id_valid!(data2, f2) # data2 contains the remaining file data excluding the first line!
+@assert sizeof(take!(data2)) < sizeof(FILE_CONTENTS)
+close(zs)
 
-# DO NOT READ FROM f2 HERE AFTER CALLING validate ON THE ARCHIVE!
-# THIS RESULTS IN UNDEFINED BEHAVIOR!
-# @assert eof(f2) == false  # THIS IS A LIE!
-# read(f2)  # THIS MAY CRASH YOUR COMPUTER!
-
+zs = zipsource("archive.zip")
+all_data = IOBuffer()
+@assert is_valid!(all_data, zs) # all_data now contains all files concatenated together
+@assert take!(all_data) == vcat(FILE1_CONTENTS, FILE2_CONTENTS, etc)
 close(zs)
 ```
 
-Note that these methods consume the data in the file or archive, as demonstrated in this
-example:
+The exclamation point in the method name is a warning to the user that these methods
+consume the data in the file or archive, as demonstrated in this example:
 
 ```julia
 using ZipStreams
 
 zs = zipsource("archive.zip")
-validate(zs)
+is_valid!(zs)
 @assert eof(zs) == true
 ```
 
@@ -195,6 +200,6 @@ validate(zs)
 ZipArchiveSource
 zipsource
 next_file
-validate
+is_valid!
 info(::ZipFileSource)
 ```
