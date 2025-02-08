@@ -98,7 +98,7 @@ the same result each time, but will only extract data to `sink` on the first cal
     If a file stored within `source` uses a File Descriptor rather than storing the size of the file
     in the Local File Header, the file must be read to the end in order to properly record the
     lengths for checking against the Central Directory. Failure to read such a file to the end will
-    result in `is_valid` returning `false` when called on the archive.
+    result in `is_valid!` returning `false` when called on the archive.
 
 See also [`is_valid!(::ZipFileSource)`](@ref).
 """
